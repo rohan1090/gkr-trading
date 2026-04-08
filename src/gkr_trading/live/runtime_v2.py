@@ -140,10 +140,14 @@ class PaperSessionRunnerV2:
         self._strategy = strategy
 
         # Build internal services
+        # Pass pending_registry so ReconciliationService can distinguish
+        # this session's own positions (blocking on mismatch) from
+        # pre-existing venue positions (warning only).
         self._recon = ReconciliationService(
             position_store=position_store,
             adapter=equity_adapter,
             session_id=config.session_id,
+            pending_registry=pending_registry,
         )
         self._supervisor = SessionSupervisor(
             event_store=event_store,
