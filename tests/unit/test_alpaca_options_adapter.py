@@ -32,15 +32,11 @@ class MockHttpClient:
         self._responses = responses or {}
         self._should_fail = should_fail
 
-    def post(self, path: str, body: Any = None) -> dict:
-        self.calls.append(("POST", path, body))
+    def request_json(self, method: str, path: str, *, query: Any = None, json_body: Any = None) -> Any:
+        self.calls.append((method, path, json_body))
         if self._should_fail:
             raise ConnectionError("Simulated failure")
-        return self._responses.get(("POST", path), {"id": "alpaca-order-123"})
-
-    def get(self, path: str) -> Any:
-        self.calls.append(("GET", path, None))
-        return self._responses.get(("GET", path), [])
+        return self._responses.get((method, path), {"id": "alpaca-order-123"})
 
 
 class TestAlpacaOptionsSubmission:

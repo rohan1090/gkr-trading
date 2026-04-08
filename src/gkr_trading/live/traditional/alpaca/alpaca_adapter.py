@@ -83,7 +83,7 @@ class AlpacaPaperEquityAdapter(VenueAdapter):
             body["limit_price"] = str(request.limit_price_cents / 100.0)
 
         try:
-            resp = self._http.post("/v2/orders", body)
+            resp = self._http.request_json("POST", "/v2/orders", json_body=body)
             venue_id = resp.get("id")
             return SubmissionResponse(
                 client_order_id=request.client_order_id,
@@ -102,15 +102,16 @@ class AlpacaPaperEquityAdapter(VenueAdapter):
 
     def cancel_order(self, client_order_id: str) -> bool:
         try:
-            self._http.delete(f"/v2/orders:by_client_order_id?client_order_id={client_order_id}")
+            self._http.request_json("DELETE", "/v2/orders:by_client_order_id", query={"client_order_id": client_order_id})
             return True
         except Exception:
             return False
 
     def get_order_status(self, client_order_id: str) -> Optional[OrderStatus]:
         try:
-            resp = self._http.get(
-                f"/v2/orders:by_client_order_id?client_order_id={client_order_id}"
+            resp = self._http.request_json(
+                "GET", "/v2/orders:by_client_order_id",
+                query={"client_order_id": client_order_id},
             )
             return _map_alpaca_status(resp.get("status", "unknown"))
         except Exception:
@@ -118,7 +119,7 @@ class AlpacaPaperEquityAdapter(VenueAdapter):
 
     def get_positions(self) -> List[VenuePosition]:
         try:
-            positions = self._http.get("/v2/positions")
+            positions = self._http.request_json("GET", "/v2/positions")
             result = []
             for pos in positions:
                 ticker = pos.get("symbol", "")
@@ -139,9 +140,20 @@ class AlpacaPaperEquityAdapter(VenueAdapter):
             logger.error(f"Failed to get positions: {exc}")
             return []
 
+    def get_open_orders(self) -> List[dict]:
+        """Get all open orders from Alpaca. Used for reconciliation."""
+        try:
+            orders = self._http.request_json(
+                "GET", "/v2/orders", query={"status": "open"},
+            )
+            return orders if isinstance(orders, list) else []
+        except Exception as exc:
+            logger.error(f"Failed to get open orders: {exc}")
+            return []
+
     def get_account(self) -> VenueAccountInfo:
         try:
-            acct = self._http.get("/v2/account")
+            acct = self._http.request_json("GET", "/v2/account")
             cash = int(float(acct.get("cash", 0)) * 100)
             bp = int(float(acct.get("buying_power", 0)) * 100)
             return VenueAccountInfo(

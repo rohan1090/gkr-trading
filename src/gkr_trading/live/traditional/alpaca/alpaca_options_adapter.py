@@ -69,7 +69,7 @@ class AlpacaOptionsAdapter(OptionsCapableAdapterMixin):
         }
 
         try:
-            resp = self._http.post("/v2/orders", body)
+            resp = self._http.request_json("POST", "/v2/orders", json_body=body)
             venue_id = resp.get("id")
             return SubmissionResponse(
                 client_order_id=request.client_order_id,
@@ -89,7 +89,7 @@ class AlpacaOptionsAdapter(OptionsCapableAdapterMixin):
     def get_options_positions(self) -> List[dict]:
         """Get current options positions from Alpaca."""
         try:
-            positions = self._http.get("/v2/positions")
+            positions = self._http.request_json("GET", "/v2/positions")
             result = []
             for pos in positions:
                 asset_class = pos.get("asset_class", "")

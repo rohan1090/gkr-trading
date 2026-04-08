@@ -34,6 +34,7 @@ from gkr_trading.strategy.sample_strategy import SampleBarCrossStrategy
 
 from gkr_trading.cli.commands.operator import operator_app
 from gkr_trading.cli.commands.paper_v2 import _build_and_run as _paper_v2_build_and_run
+from gkr_trading.cli.commands.paper_v2 import paper_v2_app as _paper_v2_sub_app
 
 app = typer.Typer(no_args_is_help=True, help="GKR Trading V1 operator CLI")
 app.add_typer(operator_app, name="operator")
@@ -479,6 +480,47 @@ def paper_v2_cmd(
         rprint(f"  events={result.get('events_count')}  errors={result.get('errors')}")
     if result.get("status") != "ok":
         raise typer.Exit(code=1)
+
+
+@app.command("paper-v2-continuous")
+def paper_v2_continuous_cmd(
+    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
+    session_id: str | None = typer.Option(
+        None, "--session-id", help="Fixed session ID. Random if omitted.",
+    ),
+    strategy: PaperV2StrategyChoice = typer.Option(
+        "equity", "--strategy", help="Sample strategy: equity or options.",
+    ),
+    shadow: bool = typer.Option(
+        False, "--shadow", help="Shadow mode.",
+    ),
+    poll_interval: float = typer.Option(
+        15.0, "--poll-interval", help="Market data poll interval in seconds.",
+    ),
+    max_cycles: int | None = typer.Option(
+        None, "--max-cycles", help="Max poll cycles. None=run until close.",
+    ),
+    no_websocket: bool = typer.Option(
+        False, "--no-websocket", help="Disable WebSocket.",
+    ),
+    as_json: bool = typer.Option(
+        False, "--json", help="Output as JSON only.",
+    ),
+) -> None:
+    """Run a continuous V2 paper session with real market data."""
+    from gkr_trading.cli.commands.paper_v2 import paper_v2_continuous
+    ctx = typer.Context(paper_v2_continuous)
+    paper_v2_continuous(
+        db_path=db_path,
+        session_id=session_id,
+        strategy=strategy,
+        shadow=shadow,
+        risk_config=None,
+        poll_interval=poll_interval,
+        max_cycles=max_cycles,
+        no_websocket=no_websocket,
+        as_json=as_json,
+    )
 
 
 @app.command("paper-v2-certify")

@@ -5,9 +5,12 @@ Returns ReconciliationBreak list with severity.
 """
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import List, Tuple
+
+logger = logging.getLogger(__name__)
 
 from gkr_trading.core.position_model import EquityPositionRecord, OptionsContractRecord
 from gkr_trading.core.reconciliation_model import (
@@ -105,6 +108,23 @@ class ReconciliationService:
                 break_type="cash",
                 severity="warning",
             ))
+
+        # Orphan / open order detection
+        if hasattr(self._adapter, "get_open_orders"):
+            try:
+                open_orders = self._adapter.get_open_orders()
+                for order in open_orders:
+                    coid = order.get("client_order_id", "")
+                    if coid:
+                        breaks.append(ReconciliationBreak(
+                            field=f"orphan_order:{coid}",
+                            local_value="unknown",
+                            venue_value=order.get("status", "open"),
+                            break_type="orphan_order",
+                            severity="warning",
+                        ))
+            except Exception as exc:
+                logger.warning(f"Open order check failed: {exc}")
 
         status = "clean" if not breaks else "break_detected"
 

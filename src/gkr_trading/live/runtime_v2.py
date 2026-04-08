@@ -1,5 +1,9 @@
 """Runtime V2 — end-to-end paper session using the new options-capable architecture.
 
+Two entry points:
+- PaperSessionRunnerV2: one-shot / test harness (caller feeds envelopes)
+- ContinuousSessionRunner: persistent loop with real market data + websocket
+
 Wires together:
   SessionSupervisor → RiskApprovalGate → OrderSubmissionService
   → AlpacaPaperEquityAdapter / AlpacaOptionsAdapter
@@ -514,3 +518,247 @@ def build_paper_runner(
         risk_gates=risk_gates,
         strategy=strategy,
     )
+
+
+# ---------------------------------------------------------------------------
+# Continuous session runner — persistent market-data loop + websocket
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ContinuousSessionConfig:
+    """Config for a continuous (non-one-shot) paper session."""
+    poll_interval_sec: float = 15.0
+    max_cycles: Optional[int] = None           # None = run until stop condition
+    stop_after_market_close: bool = True
+    max_consecutive_md_failures: int = 5
+    enable_websocket: bool = True
+
+
+class StopReason:
+    MARKET_CLOSED = "market_closed"
+    KILL_SWITCH = "kill_switch"
+    BLOCKING_RECON = "blocking_reconciliation_break"
+    MD_FAILURE = "market_data_failure"
+    MAX_CYCLES = "max_cycles_reached"
+    OPERATOR_HALT = "operator_halt"
+    WS_FATAL = "websocket_fatal"
+    EXTERNAL = "external_stop"
+
+
+@dataclass
+class ContinuousSessionResult:
+    """Result of a continuous session run."""
+    session_result: PaperSessionV2Result
+    cycles_completed: int
+    stop_reason: str
+    md_polls: int
+    md_envelopes: int
+    ws_connected: bool
+    ws_trade_updates: int
+    replay_anomaly_count: int
+
+
+class ContinuousSessionRunner:
+    """Persistent session loop: polls market data, feeds strategy, handles fills via WS.
+
+    Lifecycle:
+    1. startup() — startup recon, WS connect, session_started event
+    2. run() — loop: poll market data → feed strategy → sleep → repeat
+       - WS trade_updates processed in background thread via callbacks
+       - Stop conditions: market close, kill switch, recon break, md failure
+    3. shutdown() — shutdown recon, WS disconnect, session_stopped event
+    """
+
+    def __init__(
+        self,
+        runner: PaperSessionRunnerV2,
+        market_data_feed: Any,            # AlpacaMarketDataFeed
+        metadata_provider: Any,           # MarketMetadataProvider
+        ws_manager: Any = None,           # AlpacaWebSocketManager
+        config: Optional[ContinuousSessionConfig] = None,
+    ) -> None:
+        self._runner = runner
+        self._feed = market_data_feed
+        self._metadata = metadata_provider
+        self._ws = ws_manager
+        self._config = config or ContinuousSessionConfig()
+        self._cycles = 0
+        self._stop_reason = ""
+        self._stop_requested = False
+        self._ws_trade_updates = 0
+        self._ws_connected = False
+        self._submission_suspended = False
+
+    @property
+    def runner(self) -> PaperSessionRunnerV2:
+        return self._runner
+
+    def request_stop(self, reason: str = StopReason.EXTERNAL) -> None:
+        """Request graceful stop from outside the loop."""
+        self._stop_requested = True
+        self._stop_reason = reason
+
+    def run_session(self) -> ContinuousSessionResult:
+        """Run the full session: startup → loop → shutdown."""
+        # --- Startup ---
+        ok = self._runner.startup()
+        if not ok:
+            result = self._runner.shutdown()
+            return ContinuousSessionResult(
+                session_result=result,
+                cycles_completed=0,
+                stop_reason=StopReason.BLOCKING_RECON,
+                md_polls=0,
+                md_envelopes=0,
+                ws_connected=False,
+                ws_trade_updates=0,
+                replay_anomaly_count=0,
+            )
+
+        # --- Start WebSocket ---
+        if self._ws and self._config.enable_websocket:
+            self._setup_ws_callbacks()
+            try:
+                self._ws.start()
+            except Exception as exc:
+                logger.warning(f"WebSocket start failed: {exc}")
+
+        # --- Main loop ---
+        self._stop_reason = self._run_loop()
+
+        # --- Stop WebSocket ---
+        if self._ws:
+            try:
+                self._ws.stop()
+            except Exception:
+                pass
+
+        # --- Shutdown ---
+        session_result = self._runner.shutdown()
+
+        # --- Replay validation ---
+        anomaly_count = self._run_replay_validation()
+
+        return ContinuousSessionResult(
+            session_result=session_result,
+            cycles_completed=self._cycles,
+            stop_reason=self._stop_reason,
+            md_polls=self._feed.stats.polls if self._feed else 0,
+            md_envelopes=self._feed.stats.envelopes_produced if self._feed else 0,
+            ws_connected=self._ws_connected,
+            ws_trade_updates=self._ws_trade_updates,
+            replay_anomaly_count=anomaly_count,
+        )
+
+    def _run_loop(self) -> str:
+        """Core loop. Returns stop reason."""
+        while not self._stop_requested:
+            # Check stop conditions
+            stop = self._check_stop_conditions()
+            if stop:
+                return stop
+
+            # Poll market data
+            try:
+                envelopes = self._feed.poll() if self._feed else []
+            except Exception as exc:
+                logger.error(f"Market data poll exception: {exc}")
+                envelopes = []
+
+            if self._feed and self._feed.has_fatal_failure:
+                return StopReason.MD_FAILURE
+
+            # Feed each envelope to strategy
+            for env in envelopes:
+                if self._stop_requested:
+                    return self._stop_reason or StopReason.EXTERNAL
+                try:
+                    self._runner.process_market_data(env)
+                except Exception as exc:
+                    logger.error(f"Error processing market data: {exc}")
+                    self._runner._errors.append(str(exc))
+
+            self._cycles += 1
+
+            # Check cycle limit
+            if self._config.max_cycles and self._cycles >= self._config.max_cycles:
+                return StopReason.MAX_CYCLES
+
+            # Sleep until next poll
+            self._interruptible_sleep(self._config.poll_interval_sec)
+
+        return self._stop_reason or StopReason.EXTERNAL
+
+    def _check_stop_conditions(self) -> Optional[str]:
+        """Check all stop conditions. Returns reason or None."""
+        # Kill switch
+        if self._runner.supervisor.state == SessionState.HALTED:
+            return StopReason.KILL_SWITCH
+
+        # Market closed
+        if self._config.stop_after_market_close and self._metadata:
+            try:
+                if not self._metadata.is_market_open():
+                    return StopReason.MARKET_CLOSED
+            except Exception:
+                pass  # Don't halt on metadata errors
+
+        return None
+
+    def _setup_ws_callbacks(self) -> None:
+        """Wire WebSocket callbacks into the runtime."""
+        self._ws._on_trade_update = self._on_ws_trade_update
+        self._ws._on_disconnect = self._on_ws_disconnect
+        self._ws._on_reconnect = self._on_ws_reconnect
+        self._ws._on_connect = self._on_ws_connect
+
+    def _on_ws_connect(self) -> None:
+        self._ws_connected = True
+        logger.info("WebSocket connected")
+
+    def _on_ws_trade_update(self, payload: dict) -> None:
+        """Process a trade_update from the websocket."""
+        self._ws_trade_updates += 1
+        try:
+            self._runner.process_venue_events([payload])
+        except Exception as exc:
+            logger.error(f"WS trade_update processing error: {exc}")
+
+    def _on_ws_disconnect(self, reason: str) -> None:
+        """Handle websocket disconnect: suspend submissions."""
+        self._ws_connected = False
+        self._submission_suspended = True
+        self._runner.supervisor.suspend(reason=f"ws_disconnect: {reason}")
+        logger.warning(f"WebSocket disconnected, submissions suspended: {reason}")
+
+    def _on_ws_reconnect(self) -> None:
+        """Handle websocket reconnect: reconcile then resume."""
+        self._ws_connected = True
+        resumed = self._runner.supervisor.resume()
+        if resumed:
+            self._submission_suspended = False
+            logger.info("WebSocket reconnected, reconciled, submissions resumed")
+        else:
+            logger.error("Post-reconnect reconciliation failed, session halted")
+            self.request_stop(StopReason.BLOCKING_RECON)
+
+    def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep that can be interrupted by stop request."""
+        end = time.time() + seconds
+        while time.time() < end and not self._stop_requested:
+            time.sleep(min(0.5, end - time.time()))
+
+    def _run_replay_validation(self) -> int:
+        """Run replay validation and return anomaly count."""
+        try:
+            from gkr_trading.core.replay.engine import ReplayEngine, replay_portfolio_state
+            events = self._runner._event_store.load_session(
+                self._runner._config.session_id
+            )
+            result = replay_portfolio_state(
+                events, Decimal("100000"), strict=False,
+            )
+            return len(result.anomalies)
+        except Exception as exc:
+            logger.error(f"Replay validation failed: {exc}")
+            return -1
