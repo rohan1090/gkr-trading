@@ -218,3 +218,102 @@ class ReplayCompletedPayload(BaseModel):
 
     session_id: SessionId
     events_replayed: int
+
+
+# --- Options Lifecycle Payloads ---
+
+class AssignmentReceivedPayload(BaseModel):
+    """NOT a fill. Assignment from OCC/broker delivered asynchronously."""
+    model_config = {"frozen": True}
+
+    event_id: str
+    instrument_occ_symbol: str
+    instrument_underlying: str
+    venue: str
+    contracts_assigned: int
+    strike_cents: int
+    right: str  # "call" or "put"
+    resulting_equity_delta: int
+    equity_underlying: str
+    assignment_price_cents: int
+    effective_date: str
+    source: str  # "auto" or "manual"
+    requires_operator_review: bool = False
+
+
+class ExerciseProcessedPayload(BaseModel):
+    """NOT a fill. Exercise of long position."""
+    model_config = {"frozen": True}
+
+    event_id: str
+    instrument_occ_symbol: str
+    instrument_underlying: str
+    venue: str
+    contracts_exercised: int
+    strike_cents: int
+    right: str
+    resulting_equity_delta: int
+    equity_underlying: str
+    effective_date: str
+    initiated_by: str  # "system" or "operator"
+
+
+class ExpirationProcessedPayload(BaseModel):
+    """NOT a fill. Option expired worthless."""
+    model_config = {"frozen": True}
+
+    event_id: str
+    instrument_occ_symbol: str
+    instrument_underlying: str
+    venue: str
+    contracts_expired: int
+    moneyness_at_expiry: str  # "otm" or "atm"
+    premium_paid_cents: int = 0
+    premium_received_cents: int = 0
+    expiry_type: str = "standard_monthly"
+
+
+class OperatorCommandPayload(BaseModel):
+    """Operator-issued command persisted before execution."""
+    model_config = {"frozen": True}
+
+    command_id: str
+    command_type: str
+    parameters: str | None = None
+    operator_id: str = "cli"
+
+
+class ReconciliationCompletedPayload(BaseModel):
+    """Reconciliation snapshot result."""
+    model_config = {"frozen": True}
+
+    snapshot_id: str
+    trigger: str
+    status: str  # "clean", "break_detected", "acknowledged"
+    break_count: int = 0
+    blocking_break_count: int = 0
+
+
+class PendingOrderRegisteredPayload(BaseModel):
+    """Pending order registered in registry before API call."""
+    model_config = {"frozen": True}
+
+    client_order_id: str
+    intent_id: str
+    instrument_key: str  # canonical_key from InstrumentRef
+    action: str
+    venue: str
+    quantity: int
+    limit_price_cents: int | None = None
+
+
+class OrderSubmissionAttemptedPayload(BaseModel):
+    """API call result or timeout recorded after submission attempt."""
+    model_config = {"frozen": True}
+
+    client_order_id: str
+    venue_order_id: str | None = None
+    success: bool
+    rejected: bool = False
+    reject_reason: str | None = None
+    timeout: bool = False

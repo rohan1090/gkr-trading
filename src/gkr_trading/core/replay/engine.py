@@ -19,6 +19,20 @@ _SKIP_REPLAY: frozenset[EventType] = frozenset(
         EventType.SIGNAL_GENERATED,
         EventType.TRADE_INTENT_CREATED,
         EventType.RISK_APPROVED,
+        # Control-plane events: audit-only, do not mutate portfolio
+        EventType.OPERATOR_COMMAND,
+        EventType.RECONCILIATION_COMPLETED,
+        EventType.PENDING_ORDER_REGISTERED,
+        EventType.ORDER_SUBMISSION_ATTEMPTED,
+        # Options lifecycle events: these DO mutate positions but are
+        # processed by the options-aware replay path, not by the
+        # legacy equity-only apply_canonical_event. The legacy replay
+        # skips them to avoid errors; the options-aware replay handles
+        # them in replay_portfolio_state_v2.
+        EventType.ASSIGNMENT_RECEIVED,
+        EventType.EXERCISE_PROCESSED,
+        EventType.EXPIRATION_PROCESSED,
+        EventType.OPTIONS_ORDER_SUBMITTED,
     }
 )
 

@@ -5,13 +5,20 @@ from typing import Any, Type
 
 from gkr_trading.core.events.envelope import SCHEMA_VERSION, CanonicalEvent, EventEnvelope
 from gkr_trading.core.events.payloads import (
+    AssignmentReceivedPayload,
     BrokerOrderRejectedPayload,
+    ExerciseProcessedPayload,
+    ExpirationProcessedPayload,
     FillReceivedPayload,
     MarketDataReceivedPayload,
+    OperatorCommandPayload,
     OrderAcknowledgedPayload,
     OrderCancelledPayload,
+    OrderSubmissionAttemptedPayload,
     OrderSubmittedPayload,
+    PendingOrderRegisteredPayload,
     PortfolioUpdatedPayload,
+    ReconciliationCompletedPayload,
     ReplayCompletedPayload,
     RiskApprovedPayload,
     RiskRejectedPayload,
@@ -37,6 +44,15 @@ _PAYLOAD_MAP: dict[EventType, Type[Any]] = {
     EventType.SESSION_STARTED: SessionStartedPayload,
     EventType.SESSION_STOPPED: SessionStoppedPayload,
     EventType.REPLAY_COMPLETED: ReplayCompletedPayload,
+    # Options lifecycle
+    EventType.ASSIGNMENT_RECEIVED: AssignmentReceivedPayload,
+    EventType.EXERCISE_PROCESSED: ExerciseProcessedPayload,
+    EventType.EXPIRATION_PROCESSED: ExpirationProcessedPayload,
+    # Control-plane
+    EventType.OPERATOR_COMMAND: OperatorCommandPayload,
+    EventType.RECONCILIATION_COMPLETED: ReconciliationCompletedPayload,
+    EventType.PENDING_ORDER_REGISTERED: PendingOrderRegisteredPayload,
+    EventType.ORDER_SUBMISSION_ATTEMPTED: OrderSubmissionAttemptedPayload,
 }
 
 

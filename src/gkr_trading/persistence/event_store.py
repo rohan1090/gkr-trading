@@ -5,6 +5,21 @@ from typing import Protocol
 
 from gkr_trading.core.events import CanonicalEvent, dumps_event, loads_event
 
+_DDL = """\
+CREATE TABLE IF NOT EXISTS events (
+    session_id   TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    envelope_json TEXT NOT NULL,
+    PRIMARY KEY (session_id, seq)
+);
+"""
+
+
+def enforce_wal_mode(conn: sqlite3.Connection) -> None:
+    """Enforce WAL mode and synchronous=FULL for durability."""
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=FULL")
+
 
 class EventStore(Protocol):
     def append(self, session_id: str, event: CanonicalEvent) -> int: ...
@@ -15,8 +30,11 @@ class EventStore(Protocol):
 
 
 class SqliteEventStore:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, init_schema: bool = True) -> None:
         self._conn = conn
+        enforce_wal_mode(conn)
+        if init_schema:
+            conn.executescript(_DDL)
 
     def append(self, session_id: str, event: CanonicalEvent) -> int:
         row = self._conn.execute(

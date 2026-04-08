@@ -18,3 +18,14 @@ class EventType(StrEnum):
     SESSION_STARTED = "session_started"
     SESSION_STOPPED = "session_stopped"
     REPLAY_COMPLETED = "replay_completed"
+    # Options lifecycle events
+    ASSIGNMENT_RECEIVED = "assignment_received"
+    EXERCISE_PROCESSED = "exercise_processed"
+    EXPIRATION_PROCESSED = "expiration_processed"
+    # Options-aware order events
+    OPTIONS_ORDER_SUBMITTED = "options_order_submitted"
+    # Operator / control-plane events
+    OPERATOR_COMMAND = "operator_command"
+    RECONCILIATION_COMPLETED = "reconciliation_completed"
+    PENDING_ORDER_REGISTERED = "pending_order_registered"
+    ORDER_SUBMISSION_ATTEMPTED = "order_submission_attempted"

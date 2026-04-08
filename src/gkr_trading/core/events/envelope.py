@@ -5,13 +5,20 @@ from typing import Any
 from pydantic import BaseModel
 
 from gkr_trading.core.events.payloads import (
+    AssignmentReceivedPayload,
     BrokerOrderRejectedPayload,
+    ExerciseProcessedPayload,
+    ExpirationProcessedPayload,
     FillReceivedPayload,
     MarketDataReceivedPayload,
+    OperatorCommandPayload,
     OrderAcknowledgedPayload,
     OrderCancelledPayload,
+    OrderSubmissionAttemptedPayload,
     OrderSubmittedPayload,
+    PendingOrderRegisteredPayload,
     PortfolioUpdatedPayload,
+    ReconciliationCompletedPayload,
     ReplayCompletedPayload,
     RiskApprovedPayload,
     RiskRejectedPayload,
@@ -59,4 +66,11 @@ class CanonicalEvent(BaseModel):
         | SessionStartedPayload
         | SessionStoppedPayload
         | ReplayCompletedPayload
+        | AssignmentReceivedPayload
+        | ExerciseProcessedPayload
+        | ExpirationProcessedPayload
+        | OperatorCommandPayload
+        | ReconciliationCompletedPayload
+        | PendingOrderRegisteredPayload
+        | OrderSubmissionAttemptedPayload
     )
