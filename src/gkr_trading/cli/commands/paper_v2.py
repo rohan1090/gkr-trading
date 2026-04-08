@@ -208,94 +208,24 @@ def _build_and_run(
     }
 
 
-@paper_v2_app.command("run")
-def paper_v2_run(
-    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
-    session_id: Optional[str] = typer.Option(
-        None, "--session-id", help="Fixed session ID. Random if omitted.",
-    ),
-    adapter: AdapterMode = typer.Option(
-        "mock", "--adapter", help="Adapter: mock (no network) or alpaca (paper API).",
-    ),
-    strategy: StrategyChoice = typer.Option(
-        "equity", "--strategy", help="Sample strategy: equity or options.",
-    ),
-    shadow: bool = typer.Option(
-        False, "--shadow", help="Shadow mode: log intents but do not submit orders.",
-    ),
-    risk_config: Optional[str] = typer.Option(
-        None, "--risk-config", help="Path to risk policy YAML.",
-    ),
-    as_json: bool = typer.Option(
-        False, "--json", help="Output as JSON only.",
-    ),
+def _run_continuous_session(
+    *,
+    db_path: str,
+    session_id: Optional[str],
+    strategy: StrategyChoice,
+    shadow: bool,
+    risk_config: Optional[str],
+    poll_interval: float,
+    max_cycles: Optional[int],
+    no_websocket: bool,
+    as_json: bool,
 ) -> None:
-    """Run an end-to-end V2 paper session."""
-    try:
-        result = _build_and_run(
-            db_path=db_path,
-            session_id=session_id,
-            adapter_mode=adapter,
-            strategy_choice=strategy,
-            shadow_mode=shadow,
-            risk_config_path=risk_config,
-        )
-    except AlpacaConfigError as e:
-        rprint(f"[red]Alpaca config error:[/red] {e}")
-        raise typer.Exit(code=1) from e
-    except Exception as e:
-        rprint(f"[red]Session error:[/red] {e}")
-        raise typer.Exit(code=1) from e
+    """Plain-Python implementation of the continuous session loop.
 
-    if as_json:
-        rprint(json.dumps(result, indent=2, default=str))
-    else:
-        status = result.get("status", "unknown")
-        sid = result.get("session_id", "?")
-        if status != "ok":
-            rprint(f"[red]Paper V2 session FAILED[/red] [cyan]{sid}[/cyan]")
-            rprint(json.dumps(result, indent=2, default=str))
-            raise typer.Exit(code=1)
-        rprint(f"[bold]Paper V2 session[/bold] [cyan]{sid}[/cyan]")
-        rprint(f"  adapter={result.get('adapter_mode')}  strategy={result.get('strategy')}")
-        rprint(f"  shadow={result.get('shadow_mode')}  startup_clean={result.get('startup_clean')}")
-        rprint(f"  shutdown_clean={result.get('shutdown_clean')}")
-        rprint(f"  intents={result.get('intents_generated')}  approved={result.get('intents_approved')}")
-        rprint(f"  submitted={result.get('orders_submitted')}  fills={result.get('fills_count')}")
-        rprint(f"  events={result.get('events_count')}  errors={result.get('errors')}")
-    if result.get("status") != "ok":
-        raise typer.Exit(code=1)
-
-
-@paper_v2_app.command("continuous")
-def paper_v2_continuous(
-    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
-    session_id: Optional[str] = typer.Option(
-        None, "--session-id", help="Fixed session ID. Random if omitted.",
-    ),
-    strategy: StrategyChoice = typer.Option(
-        "equity", "--strategy", help="Sample strategy: equity or options.",
-    ),
-    shadow: bool = typer.Option(
-        False, "--shadow", help="Shadow mode: log intents but do not submit orders.",
-    ),
-    risk_config: Optional[str] = typer.Option(
-        None, "--risk-config", help="Path to risk policy YAML.",
-    ),
-    poll_interval: float = typer.Option(
-        15.0, "--poll-interval", help="Market data poll interval in seconds.",
-    ),
-    max_cycles: Optional[int] = typer.Option(
-        None, "--max-cycles", help="Max poll cycles before stopping. None=run until close.",
-    ),
-    no_websocket: bool = typer.Option(
-        False, "--no-websocket", help="Disable WebSocket for fill streaming.",
-    ),
-    as_json: bool = typer.Option(
-        False, "--json", help="Output as JSON only.",
-    ),
-) -> None:
-    """Run a continuous V2 paper session with real market data."""
+    Extracted from paper_v2_continuous so it can be called from other
+    Typer commands (e.g. paper_v2_continuous_cmd in main.py) without
+    needing a Typer/Click context object.
+    """
     import uuid as _uuid
     import time as _time
 
@@ -439,6 +369,107 @@ def paper_v2_continuous(
         rprint(f"  fills={result.session_result.fills_count}  replay_anomalies={result.replay_anomaly_count}")
         if result.session_result.errors:
             rprint(f"  [red]errors={result.session_result.errors}[/red]")
+
+
+@paper_v2_app.command("run")
+def paper_v2_run(
+    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
+    session_id: Optional[str] = typer.Option(
+        None, "--session-id", help="Fixed session ID. Random if omitted.",
+    ),
+    adapter: AdapterMode = typer.Option(
+        "mock", "--adapter", help="Adapter: mock (no network) or alpaca (paper API).",
+    ),
+    strategy: StrategyChoice = typer.Option(
+        "equity", "--strategy", help="Sample strategy: equity or options.",
+    ),
+    shadow: bool = typer.Option(
+        False, "--shadow", help="Shadow mode: log intents but do not submit orders.",
+    ),
+    risk_config: Optional[str] = typer.Option(
+        None, "--risk-config", help="Path to risk policy YAML.",
+    ),
+    as_json: bool = typer.Option(
+        False, "--json", help="Output as JSON only.",
+    ),
+) -> None:
+    """Run an end-to-end V2 paper session."""
+    try:
+        result = _build_and_run(
+            db_path=db_path,
+            session_id=session_id,
+            adapter_mode=adapter,
+            strategy_choice=strategy,
+            shadow_mode=shadow,
+            risk_config_path=risk_config,
+        )
+    except AlpacaConfigError as e:
+        rprint(f"[red]Alpaca config error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+    except Exception as e:
+        rprint(f"[red]Session error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if as_json:
+        rprint(json.dumps(result, indent=2, default=str))
+    else:
+        status = result.get("status", "unknown")
+        sid = result.get("session_id", "?")
+        if status != "ok":
+            rprint(f"[red]Paper V2 session FAILED[/red] [cyan]{sid}[/cyan]")
+            rprint(json.dumps(result, indent=2, default=str))
+            raise typer.Exit(code=1)
+        rprint(f"[bold]Paper V2 session[/bold] [cyan]{sid}[/cyan]")
+        rprint(f"  adapter={result.get('adapter_mode')}  strategy={result.get('strategy')}")
+        rprint(f"  shadow={result.get('shadow_mode')}  startup_clean={result.get('startup_clean')}")
+        rprint(f"  shutdown_clean={result.get('shutdown_clean')}")
+        rprint(f"  intents={result.get('intents_generated')}  approved={result.get('intents_approved')}")
+        rprint(f"  submitted={result.get('orders_submitted')}  fills={result.get('fills_count')}")
+        rprint(f"  events={result.get('events_count')}  errors={result.get('errors')}")
+    if result.get("status") != "ok":
+        raise typer.Exit(code=1)
+
+
+@paper_v2_app.command("continuous")
+def paper_v2_continuous(
+    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
+    session_id: Optional[str] = typer.Option(
+        None, "--session-id", help="Fixed session ID. Random if omitted.",
+    ),
+    strategy: StrategyChoice = typer.Option(
+        "equity", "--strategy", help="Sample strategy: equity or options.",
+    ),
+    shadow: bool = typer.Option(
+        False, "--shadow", help="Shadow mode: log intents but do not submit orders.",
+    ),
+    risk_config: Optional[str] = typer.Option(
+        None, "--risk-config", help="Path to risk policy YAML.",
+    ),
+    poll_interval: float = typer.Option(
+        15.0, "--poll-interval", help="Market data poll interval in seconds.",
+    ),
+    max_cycles: Optional[int] = typer.Option(
+        None, "--max-cycles", help="Max poll cycles before stopping. None=run until close.",
+    ),
+    no_websocket: bool = typer.Option(
+        False, "--no-websocket", help="Disable WebSocket for fill streaming.",
+    ),
+    as_json: bool = typer.Option(
+        False, "--json", help="Output as JSON only.",
+    ),
+) -> None:
+    """Run a continuous V2 paper session with real market data."""
+    _run_continuous_session(
+        db_path=db_path,
+        session_id=session_id,
+        strategy=strategy,
+        shadow=shadow,
+        risk_config=risk_config,
+        poll_interval=poll_interval,
+        max_cycles=max_cycles,
+        no_websocket=no_websocket,
+        as_json=as_json,
+    )
 
 
 @paper_v2_app.command("certify")
