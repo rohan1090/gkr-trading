@@ -33,6 +33,7 @@ from gkr_trading.persistence.event_store import SqliteEventStore
 from gkr_trading.strategy.sample_strategy import SampleBarCrossStrategy
 
 from gkr_trading.cli.commands.operator import operator_app
+from gkr_trading.cli.commands.paper_v2 import _build_and_run as _paper_v2_build_and_run
 
 app = typer.Typer(no_args_is_help=True, help="GKR Trading V1 operator CLI")
 app.add_typer(operator_app, name="operator")
@@ -414,6 +415,104 @@ def portfolio_show(
             indent=2,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# V2 paper runtime commands
+# ---------------------------------------------------------------------------
+
+PaperV2AdapterMode = Literal["mock", "alpaca"]
+PaperV2StrategyChoice = Literal["equity", "options"]
+
+
+@app.command("paper-v2")
+def paper_v2_cmd(
+    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
+    session_id: str | None = typer.Option(
+        None, "--session-id", help="Fixed session ID. Random if omitted.",
+    ),
+    adapter: PaperV2AdapterMode = typer.Option(
+        "mock", "--adapter", help="Adapter: mock (no network) or alpaca (paper API).",
+    ),
+    strategy: PaperV2StrategyChoice = typer.Option(
+        "equity", "--strategy", help="Sample strategy: equity or options.",
+    ),
+    shadow: bool = typer.Option(
+        False, "--shadow", help="Shadow mode: log intents but do not submit orders.",
+    ),
+    risk_config: str | None = typer.Option(
+        None, "--risk-config", help="Path to risk policy YAML.",
+    ),
+    as_json: bool = typer.Option(
+        False, "--json", help="Output as JSON only.",
+    ),
+) -> None:
+    """Run an end-to-end V2 paper session (new architecture)."""
+    try:
+        result = _paper_v2_build_and_run(
+            db_path=db_path,
+            session_id=session_id,
+            adapter_mode=adapter,
+            strategy_choice=strategy,
+            shadow_mode=shadow,
+            risk_config_path=risk_config,
+        )
+    except Exception as e:
+        rprint(f"[red]Session error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if as_json:
+        rprint(json.dumps(result, indent=2, default=str))
+    else:
+        status = result.get("status", "unknown")
+        sid_out = result.get("session_id", "?")
+        if status != "ok":
+            rprint(f"[red]Paper V2 session FAILED[/red] [cyan]{sid_out}[/cyan]")
+            rprint(json.dumps(result, indent=2, default=str))
+            raise typer.Exit(code=1)
+        rprint(f"[bold]Paper V2 session[/bold] [cyan]{sid_out}[/cyan]")
+        rprint(f"  adapter={result.get('adapter_mode')}  strategy={result.get('strategy')}")
+        rprint(f"  shadow={result.get('shadow_mode')}  startup_clean={result.get('startup_clean')}")
+        rprint(f"  shutdown_clean={result.get('shutdown_clean')}")
+        rprint(f"  intents={result.get('intents_generated')}  approved={result.get('intents_approved')}")
+        rprint(f"  submitted={result.get('orders_submitted')}  fills={result.get('fills_count')}")
+        rprint(f"  events={result.get('events_count')}  errors={result.get('errors')}")
+    if result.get("status") != "ok":
+        raise typer.Exit(code=1)
+
+
+@app.command("paper-v2-certify")
+def paper_v2_certify_cmd(
+    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON only."),
+) -> None:
+    """Run both equity and options sample strategies end-to-end (mock adapter)."""
+    results = []
+    for strat in ("equity", "options"):
+        result = _paper_v2_build_and_run(
+            db_path=db_path,
+            session_id=None,
+            adapter_mode="mock",
+            strategy_choice=strat,
+            shadow_mode=False,
+            risk_config_path=None,
+        )
+        results.append(result)
+
+    all_ok = all(r.get("status") == "ok" for r in results)
+
+    if as_json:
+        rprint(json.dumps({"passed": all_ok, "sessions": results}, indent=2, default=str))
+    else:
+        for r in results:
+            tag = "[green]PASS[/green]" if r.get("status") == "ok" else "[red]FAIL[/red]"
+            rprint(f"  {tag} {r.get('strategy')} session={r.get('session_id')}")
+
+        if all_ok:
+            rprint("[bold green]Paper certification PASSED[/bold green]")
+        else:
+            rprint("[bold red]Paper certification FAILED[/bold red]")
+            raise typer.Exit(code=1)
 
 
 def main() -> None:

@@ -1,0 +1,32 @@
+# Options risk policy configuration — conservative defaults (long-only).
+#
+# These settings apply to OptionsRiskPolicy and ExpiryWindowHalt.
+# Overrides are loaded at runtime via load_options_risk_config().
+
+# Per-order contract limit — start at 1; increase after 10+ clean sessions
+max_contracts_per_order: 1
+
+# Total open contracts per underlying
+max_contracts_per_underlying: 3
+
+# Block naked short calls (undefined risk)
+block_undefined_risk: true
+
+# Short options premium exposure cap (cents) — 0 = no short options allowed
+max_short_premium_exposure_cents: 0
+
+# Expiry window: block NEW opening orders within N minutes of market close on expiry day
+expiry_window_minutes: 60
+
+# Expiry proximity: halt new orders on any contract expiring within N trading days
+expiry_proximity_days_halt: 1
+
+# Maximum percentage of options buying power to deploy at once
+max_options_buying_power_pct: 0.25
+
+# Daily stop-loss in cents — halt all trading after this daily loss threshold
+daily_stop_loss_cents: 5000
+
+# Allowed trade types (long-only by default)
+allow_sell_to_open: false
+allow_buy_to_close: true

@@ -30,9 +30,30 @@ def _intent(ref, action="buy_to_open", qty=1):
     )
 
 
+class TestSellToOpenBlocked:
+    def test_sell_to_open_blocked_by_default(self):
+        """Default allow_sell_to_open=False blocks all sell_to_open."""
+        policy = OptionsRiskPolicy()
+        decision = policy.evaluate(
+            _intent(_options_ref("call"), action="sell_to_open"),
+            context=None,
+        )
+        assert not decision.approved
+        assert decision.reason_code == "SELL_TO_OPEN_BLOCKED"
+
+    def test_sell_to_open_allowed_when_configured(self):
+        policy = OptionsRiskPolicy(allow_sell_to_open=True)
+        decision = policy.evaluate(
+            _intent(_options_ref("put"), action="sell_to_open"),
+            context=None,
+        )
+        assert decision.approved
+
+
 class TestUndefinedRiskBlock:
     def test_naked_short_call_blocked(self):
-        policy = OptionsRiskPolicy(block_undefined_risk=True)
+        # allow_sell_to_open=True so we reach the UNDEFINED_RISK gate
+        policy = OptionsRiskPolicy(block_undefined_risk=True, allow_sell_to_open=True)
         decision = policy.evaluate(
             _intent(_options_ref("call"), action="sell_to_open"),
             context=None,
@@ -42,7 +63,7 @@ class TestUndefinedRiskBlock:
 
     def test_short_put_allowed(self):
         """Short puts have defined risk (max loss = strike * multiplier)."""
-        policy = OptionsRiskPolicy(block_undefined_risk=True)
+        policy = OptionsRiskPolicy(block_undefined_risk=True, allow_sell_to_open=True)
         decision = policy.evaluate(
             _intent(_options_ref("put"), action="sell_to_open"),
             context=None,
