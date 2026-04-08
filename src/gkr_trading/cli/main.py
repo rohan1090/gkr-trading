@@ -32,7 +32,10 @@ from gkr_trading.persistence.db import open_sqlite
 from gkr_trading.persistence.event_store import SqliteEventStore
 from gkr_trading.strategy.sample_strategy import SampleBarCrossStrategy
 
+from gkr_trading.cli.commands.operator import operator_app
+
 app = typer.Typer(no_args_is_help=True, help="GKR Trading V1 operator CLI")
+app.add_typer(operator_app, name="operator")
 
 AdapterChoice = Literal["mock", "alpaca", "dry_run"]
 
@@ -299,11 +302,20 @@ def session_inspect(
         for a in replay_res.anomalies[:20]
     ]
     anomaly_types = _replay_anomaly_types_histogram(replay_res.anomalies)
+    # Options lifecycle summary
+    options_lifecycle = {
+        "assignments": counts.get("assignment_received", 0),
+        "exercises": counts.get("exercise_processed", 0),
+        "expirations": counts.get("expiration_processed", 0),
+        "operator_commands": counts.get("operator_command", 0),
+        "reconciliation_completed": counts.get("reconciliation_completed", 0),
+    }
     rprint(
         json.dumps(
             {
                 "count": len(evs),
                 "by_type": counts,
+                "options_lifecycle": options_lifecycle,
                 "order_rejects_preview": rejects_preview,
                 "replay_anomaly_count": len(replay_res.anomalies),
                 "replay_anomaly_types": anomaly_types,
