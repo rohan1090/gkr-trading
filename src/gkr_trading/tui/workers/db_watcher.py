@@ -136,8 +136,8 @@ class DBWatcher:
                         else:
                             # Has events but no stop — could be running
                             status = "running"
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"Session metadata parse error for {sid}: {exc}")
 
                 sessions.append({
                     "session_id": sid,
@@ -273,8 +273,8 @@ class DBWatcher:
                             trade_count += 1
                         elif et == "fill_received":
                             fill_count += 1
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug(f"Event parse error in daily summary: {exc}")
 
                 key = strategy or f"unknown_{sid[:8]}"
                 result[key] = {
@@ -330,7 +330,8 @@ class DBWatcher:
                         event_date = dt.date()
                         s["date_str"] = event_date.strftime("%b %-d %Y")
                         s["is_today"] = (event_date == today)
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug(f"Session date parse error for {sid}: {exc}")
                         s["started_at"] = ""
                         s["date_str"] = "Unknown date"
                         s["is_today"] = False
@@ -386,8 +387,8 @@ class DBWatcher:
                             payload_summary=payload_str[:80],
                         )
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"Event parse error in get_session_events: {exc}")
             return events
         except Exception as exc:
             logger.error(f"get_session_events error: {exc}")

@@ -159,8 +159,8 @@ class MainScreen(Screen):
                 right.update(f"[#444444]CLOSED  {time_str}[/]")
             else:
                 right.update(f"[#666666]{time_str}[/]")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Clock tick error: {exc}")
 
     # ── Tab switching ──
 
@@ -245,8 +245,8 @@ class MainScreen(Screen):
         try:
             label = self.query_one("#replay-session-label", Static)
             label.update(f"  Session: {session_id[:20]}...")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Replay session label update failed: {exc}")
 
         try:
             results = self.query_one("#replay-results", Static)
@@ -264,8 +264,8 @@ class MainScreen(Screen):
                 f"[bold]Events replayed:[/] {event_count}  |  "
                 f"{badge}"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Replay results update failed: {exc}")
 
         # Fill anomaly table
         try:
@@ -282,12 +282,12 @@ class MainScreen(Screen):
                     f"[{color}]{code}[/]",
                     msg[:60],
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Anomaly table update failed: {exc}")
 
     def show_replay_error(self, error: str) -> None:
         try:
             results = self.query_one("#replay-results", Static)
             results.update(f"[#ff4444]Replay error: {error}[/]")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Replay error display failed: {exc}")

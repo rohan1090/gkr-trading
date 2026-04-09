@@ -131,7 +131,7 @@ class GKRTradingApp(App):
 
         if not self._market_poller.available:
             self.notify(
-                "No Alpaca credentials — market data unavailable",
+                "yfinance not available — market data unavailable",
                 severity="warning",
                 timeout=5,
             )
@@ -187,13 +187,15 @@ class GKRTradingApp(App):
 
     def _replay_pending_data(self) -> None:
         """Replay cached worker data into widgets now that all tabs are mounted."""
+        logger.info(
+            f"_replay_pending_data: snapshots={len(self._pending_snapshots)}, "
+            f"positions={len(self._pending_positions)}, "
+            f"account={'yes' if self._pending_account else 'no'}"
+        )
         if self._pending_snapshots:
             self._on_market_data(self._pending_snapshots)
-            self._pending_snapshots = []
         if self._pending_positions or self._pending_account:
             self._on_positions_update(self._pending_positions, self._pending_account)
-            self._pending_positions = []
-            self._pending_account = None
 
     def _find_todays_session(self) -> Optional[str]:
         """Find the session that was started today."""
@@ -231,8 +233,18 @@ class GKRTradingApp(App):
             time.sleep(3.0)
 
     def _market_poll_loop(self) -> None:
-        """Background thread: poll market data every 15s."""
+        """Background thread: poll market data every 15s.
+
+        Waits 2 seconds on first iteration to give Textual time to fully
+        mount all tabs (including lazy TabPane contents).
+        """
         worker = get_current_worker()
+
+        # Initial delay — let Textual mount all widgets before first poll
+        logger.info("MarketPoller: waiting 2s for Textual mount...")
+        time.sleep(2.0)
+
+        first_poll = True
         while not worker.is_cancelled:
             if not self._market_poller or not self._market_poller.available:
                 time.sleep(30.0)
@@ -241,16 +253,21 @@ class GKRTradingApp(App):
             try:
                 snapshots, market_open = self._market_poller.poll_once()
                 if snapshots:
+                    logger.info(f"MarketPoller: got {len(snapshots)} snapshots, bridging to main thread")
                     for s in snapshots:
                         if s.last_cents is not None:
                             self._market_prices[s.ticker] = s.last_cents
+                    # Always cache the latest snapshots for replay
+                    self._pending_snapshots = list(snapshots)
                     self.call_from_thread(self._on_market_data, snapshots)
+                else:
+                    logger.warning("MarketPoller: poll_once returned 0 snapshots")
 
                 if market_open is not None and market_open != self._market_open:
                     self._market_open = market_open
                     self.call_from_thread(self._on_market_status, market_open)
             except Exception as exc:
-                logger.error(f"Market poller error: {exc}")
+                logger.error(f"Market poller error: {exc}", exc_info=True)
 
             time.sleep(self._market_poller.interval)
 
@@ -305,23 +322,30 @@ class GKRTradingApp(App):
     # ── DataBus callbacks (bridged to Textual main thread) ──────────
 
     def _on_bus_market_snapshot(self, payload: dict) -> None:
-        """Called from poller thread via DataBus."""
+        """Called from ObservationPlane poller thread via DataBus.
+
+        Bridges the data into the Textual main thread price cache.
+        """
         ticker = payload.get("ticker")
         last_cents = payload.get("last_cents")
         if ticker and last_cents is not None:
             self._market_prices[ticker] = last_cents
+            logger.debug(f"DataBus snapshot: {ticker}={last_cents}c")
 
     def _on_bus_positions(self, payload: dict) -> None:
-        pass
+        logger.debug(f"DataBus positions update: {len(payload.get('positions', []))} positions")
 
     def _on_bus_account(self, payload: dict) -> None:
-        pass
+        logger.debug(f"DataBus account update received")
 
     def _on_bus_market_status(self, payload: dict) -> None:
         is_open = payload.get("is_open", False)
         if is_open != self._market_open:
             self._market_open = is_open
-            self.call_from_thread(self._on_market_status, is_open)
+            try:
+                self.call_from_thread(self._on_market_status, is_open)
+            except Exception as exc:
+                logger.warning(f"Failed to bridge market status to main thread: {exc}")
 
     def _update_history_ui(self) -> None:
         self._refresh_history()
@@ -330,8 +354,8 @@ class GKRTradingApp(App):
         try:
             footer = self.query_one("#event-log-footer", EventLogFooter)
             footer.append_events(events)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"EventLogFooter not ready: {exc}")
 
     def _on_market_data(self, snapshots: list) -> None:
         market_ok = False
@@ -339,8 +363,9 @@ class GKRTradingApp(App):
             table = self.query_one("#market-data", MarketDataTable)
             table.update_data(snapshots)
             market_ok = True
-        except Exception:
-            pass
+            logger.info(f"_on_market_data: updated MarketDataTable with {len(snapshots)} snapshots")
+        except Exception as exc:
+            logger.warning(f"MarketDataTable not ready (will retry via pending cache): {exc}")
 
         # Cache if market table wasn't ready yet
         if not market_ok:
@@ -362,8 +387,8 @@ class GKRTradingApp(App):
                     parts.append(f"[bold]{snap.ticker}[/] {price:.2f}")
             if parts:
                 header.update("  ".join(parts))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Header ticker tape not ready: {exc}")
 
         if self._selected_ticker and self._market_poller:
             self.show_ticker_chart(self._selected_ticker)
@@ -373,8 +398,8 @@ class GKRTradingApp(App):
             screen = self.screen
             if hasattr(screen, "update_header"):
                 screen.update_header(market_open=is_open)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Market status header update failed: {exc}")
 
         try:
             logo = self.query_one("#header-logo", Static)
@@ -382,8 +407,8 @@ class GKRTradingApp(App):
                 logo.update("[#00e676]●[/] [bold #ffb300]GKR TRADING[/]")
             else:
                 logo.update("[#444444]●[/] [bold #ffb300]GKR TRADING[/]")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Logo update failed: {exc}")
 
     # ── Public API (called from screen/widgets) ─────────────────────────
 
@@ -400,8 +425,8 @@ class GKRTradingApp(App):
         try:
             footer = self.query_one("#event-log-footer", EventLogFooter)
             footer.load_events(self._all_events)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"EventLogFooter not ready for session load: {exc}")
 
         self._detect_kill_switch_level()
 
@@ -416,8 +441,8 @@ class GKRTradingApp(App):
                 panel.update_chart(ticker, prices)
             else:
                 panel.update_chart(ticker, [])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"SparklinePanel update failed: {exc}")
 
     def handle_kill_switch(self, level: str) -> None:
         if level == self._ks_level:
@@ -455,8 +480,8 @@ class GKRTradingApp(App):
                 try:
                     panel = self.query_one("#kill-switch-panel", KillSwitchPanel)
                     panel.update_level(level)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"KillSwitchPanel update failed: {exc}")
                 self.notify(f"Kill switch set to {level}", severity="information")
             else:
                 self.notify(f"Kill switch error: {result.stderr[:100]}", severity="error")
@@ -522,15 +547,15 @@ class GKRTradingApp(App):
         try:
             panel = self.query_one("#recon-panel", ReconciliationPanel)
             panel.show_results(status, breaks)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"ReconciliationPanel not ready: {exc}")
 
     def _show_recon_error(self, error: str) -> None:
         try:
             panel = self.query_one("#recon-panel", ReconciliationPanel)
             panel.show_error(error)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"ReconciliationPanel not ready for error: {exc}")
         self.notify(f"Reconciliation error: {error[:80]}", severity="error")
 
     def handle_replay(self) -> None:
@@ -580,16 +605,16 @@ class GKRTradingApp(App):
             screen = self.screen
             if hasattr(screen, "show_replay_results"):
                 screen.show_replay_results(session_id, cash, pos_count, event_count, anomalies)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Replay results display failed: {exc}")
 
     def _show_replay_error(self, error: str) -> None:
         try:
             screen = self.screen
             if hasattr(screen, "show_replay_error"):
                 screen.show_replay_error(error)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Replay error display failed: {exc}")
         self.notify(f"Replay error: {error[:80]}", severity="error")
 
     # ── Strategy management ─────────────────────────────────────────────
@@ -673,15 +698,15 @@ class GKRTradingApp(App):
         try:
             footer = self.query_one("#footer-log")
             footer.toggle_class("hidden")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Footer log toggle failed: {exc}")
 
     def on_unmount(self) -> None:
         if self._observation_plane:
             try:
                 self._observation_plane.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"ObservationPlane stop error: {exc}")
 
     # ── Internal helpers ────────────────────────────────────────────────
 
@@ -710,13 +735,13 @@ class GKRTradingApp(App):
         try:
             alloc = self.query_one("#strategy-alloc-panel", StrategyAllocationPanel)
             alloc.update_strategy_states(self._strategy_states)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"StrategyAllocationPanel not ready: {exc}")
         try:
             ctrl = self.query_one("#strategy-control-panel", StrategyControlPanel)
             ctrl.update_strategy_states(self._strategy_states)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"StrategyControlPanel not ready: {exc}")
 
     def _detect_kill_switch_level(self) -> None:
         level = "none"
@@ -736,5 +761,5 @@ class GKRTradingApp(App):
         try:
             panel = self.query_one("#kill-switch-panel", KillSwitchPanel)
             panel.update_level(level)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"KillSwitchPanel not ready: {exc}")

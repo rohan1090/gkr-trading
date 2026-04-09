@@ -193,24 +193,84 @@ class ObservationPlane:
     # ── Polling methods ────────────────────────────────────────────
 
     def _poll_snapshots_once(self) -> int:
-        """Poll Alpaca /v2/stocks/snapshots.  Returns count of tickers updated."""
-        if not self._data_http or not self._equity_tickers:
+        """Poll yfinance for equity snapshots.  Returns count of tickers updated.
+
+        Falls back to Alpaca /v2/stocks/snapshots only if yfinance is unavailable.
+        """
+        if not self._equity_tickers:
             return 0
 
-        symbols = ",".join(self._equity_tickers)
-        raw = self._data_http.request_json(
-            "GET", "/v2/stocks/snapshots", query={"symbols": symbols, "feed": "iex"}
-        )
-        if not isinstance(raw, dict):
+        # Primary: yfinance (free, no subscription)
+        try:
+            return self._poll_snapshots_yfinance()
+        except Exception as exc:
+            logger.warning(f"yfinance snapshot poll failed, trying Alpaca fallback: {exc}")
+
+        # Fallback: Alpaca data API (requires paid subscription)
+        if not self._data_http:
             return 0
+
+        try:
+            symbols = ",".join(self._equity_tickers)
+            raw = self._data_http.request_json(
+                "GET", "/v2/stocks/snapshots", query={"symbols": symbols, "feed": "iex"}
+            )
+            if not isinstance(raw, dict):
+                return 0
+
+            count = 0
+            for ticker, snap_data in raw.items():
+                parsed = self._parse_single_snapshot(ticker, snap_data)
+                if parsed:
+                    self._market_cache.upsert_snapshot(ticker, parsed)
+                    self._bus.publish(TOPIC_MARKET_SNAPSHOT, parsed)
+                    count += 1
+            return count
+        except Exception as exc:
+            logger.error(f"Alpaca snapshot fallback also failed: {exc}")
+            return 0
+
+    def _poll_snapshots_yfinance(self) -> int:
+        """Poll yfinance for equity snapshots.  Returns count of tickers updated."""
+        import yfinance as yf
+
+        tickers_str = " ".join(self._equity_tickers)
+        tickers_obj = yf.Tickers(tickers_str)
 
         count = 0
-        for ticker, snap_data in raw.items():
-            parsed = self._parse_single_snapshot(ticker, snap_data)
-            if parsed:
-                self._market_cache.upsert_snapshot(ticker, parsed)
+        for ticker_sym in self._equity_tickers:
+            try:
+                t = tickers_obj.tickers.get(ticker_sym)
+                if t is None:
+                    continue
+
+                info = t.fast_info
+                last_price = getattr(info, "last_price", None)
+                if last_price is None:
+                    continue
+
+                open_price = getattr(info, "open", None)
+                day_high = getattr(info, "day_high", None)
+                day_low = getattr(info, "day_low", None)
+                prev_close = getattr(info, "previous_close", None)
+                last_volume = getattr(info, "last_volume", None)
+
+                parsed = {
+                    "ticker": ticker_sym,
+                    "last_cents": int(round(last_price * 100)),
+                    "open_cents": int(round(open_price * 100)) if open_price else None,
+                    "high_cents": int(round(day_high * 100)) if day_high else None,
+                    "low_cents": int(round(day_low * 100)) if day_low else None,
+                    "prev_close_cents": int(round(prev_close * 100)) if prev_close else None,
+                    "volume": int(last_volume) if last_volume else None,
+                    "source": "yfinance",
+                }
+                self._market_cache.upsert_snapshot(ticker_sym, parsed)
                 self._bus.publish(TOPIC_MARKET_SNAPSHOT, parsed)
                 count += 1
+            except Exception as exc:
+                logger.warning(f"yfinance snapshot for {ticker_sym}: {exc}")
+
         return count
 
     def _poll_positions_once(self) -> int:
@@ -267,45 +327,104 @@ class ObservationPlane:
         return True
 
     def _poll_bars_once(self) -> int:
-        """Poll Alpaca /v2/stocks/bars for OHLCV data.  Returns ticker count."""
-        if not self._data_http or not self._equity_tickers:
+        """Poll for OHLCV bars data.  Uses yfinance primary, Alpaca fallback.
+        Returns ticker count."""
+        if not self._equity_tickers:
             return 0
 
-        symbols = ",".join(self._equity_tickers)
-        raw = self._data_http.request_json(
-            "GET", "/v2/stocks/bars",
-            query={
-                "symbols": symbols,
-                "timeframe": "1Day",
-                "limit": "1",
-                "sort": "desc",
-                "adjustment": "raw",
-            },
-        )
-        if not isinstance(raw, dict):
+        # Primary: yfinance
+        try:
+            return self._poll_bars_yfinance()
+        except Exception as exc:
+            logger.warning(f"yfinance bars poll failed, trying Alpaca fallback: {exc}")
+
+        # Fallback: Alpaca data API
+        if not self._data_http:
             return 0
 
-        bars_data = raw.get("bars", {})
+        try:
+            symbols = ",".join(self._equity_tickers)
+            raw = self._data_http.request_json(
+                "GET", "/v2/stocks/bars",
+                query={
+                    "symbols": symbols,
+                    "timeframe": "1Day",
+                    "limit": "1",
+                    "sort": "desc",
+                    "adjustment": "raw",
+                },
+            )
+            if not isinstance(raw, dict):
+                return 0
+
+            bars_data = raw.get("bars", {})
+            count = 0
+            for ticker, bars in bars_data.items():
+                if not bars:
+                    continue
+                bar = bars[0]
+                data = {
+                    "ticker": ticker,
+                    "last_cents": int(float(bar.get("c", 0)) * 100),
+                    "open_cents": int(float(bar.get("o", 0)) * 100),
+                    "high_cents": int(float(bar.get("h", 0)) * 100),
+                    "low_cents": int(float(bar.get("l", 0)) * 100),
+                    "volume": bar.get("v"),
+                    "timestamp_utc": bar.get("t", ""),
+                    "source": "alpaca_bars",
+                }
+                self._market_cache.upsert_snapshot(ticker, data)
+                self._bus.publish(TOPIC_OHLCV_BAR, {
+                    "ticker": ticker, "timeframe": "1Day", "bars": bars,
+                })
+                count += 1
+            return count
+        except Exception as exc:
+            logger.error(f"Alpaca bars fallback also failed: {exc}")
+            return 0
+
+    def _poll_bars_yfinance(self) -> int:
+        """Poll yfinance for daily OHLCV bars."""
+        import yfinance as yf
+
+        tickers_str = " ".join(self._equity_tickers)
+        tickers_obj = yf.Tickers(tickers_str)
+
         count = 0
-        for ticker, bars in bars_data.items():
-            if not bars:
-                continue
-            bar = bars[0]
-            data = {
-                "ticker": ticker,
-                "last_cents": int(float(bar.get("c", 0)) * 100),
-                "open_cents": int(float(bar.get("o", 0)) * 100),
-                "high_cents": int(float(bar.get("h", 0)) * 100),
-                "low_cents": int(float(bar.get("l", 0)) * 100),
-                "volume": bar.get("v"),
-                "timestamp_utc": bar.get("t", ""),
-                "source": "alpaca_bars",
-            }
-            self._market_cache.upsert_snapshot(ticker, data)
-            self._bus.publish(TOPIC_OHLCV_BAR, {
-                "ticker": ticker, "timeframe": "1Day", "bars": bars,
-            })
-            count += 1
+        for ticker_sym in self._equity_tickers:
+            try:
+                t = tickers_obj.tickers.get(ticker_sym)
+                if t is None:
+                    continue
+
+                info = t.fast_info
+                last_price = getattr(info, "last_price", None)
+                if last_price is None:
+                    continue
+
+                open_price = getattr(info, "open", None)
+                day_high = getattr(info, "day_high", None)
+                day_low = getattr(info, "day_low", None)
+                last_volume = getattr(info, "last_volume", None)
+
+                data = {
+                    "ticker": ticker_sym,
+                    "last_cents": int(round(last_price * 100)),
+                    "open_cents": int(round(open_price * 100)) if open_price else None,
+                    "high_cents": int(round(day_high * 100)) if day_high else None,
+                    "low_cents": int(round(day_low * 100)) if day_low else None,
+                    "volume": int(last_volume) if last_volume else None,
+                    "source": "yfinance_bars",
+                }
+                self._market_cache.upsert_snapshot(ticker_sym, data)
+                self._bus.publish(TOPIC_OHLCV_BAR, {
+                    "ticker": ticker_sym, "timeframe": "1Day",
+                    "bars": [data],
+                })
+                count += 1
+            except Exception as exc:
+                logger.warning(f"yfinance bars for {ticker_sym}: {exc}")
+
         return count
 
     # ── Helpers ────────────────────────────────────────────────────

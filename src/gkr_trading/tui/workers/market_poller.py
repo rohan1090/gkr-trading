@@ -1,7 +1,12 @@
 """Background market data poller — feeds live prices to the TUI.
 
-Runs in a Textual worker thread.  Polls AlpacaMarketDataFeed every 15 s
+Runs in a Textual worker thread.  Polls yfinance every 15 s
 and posts MarketDataMessage to the app message queue.
+
+Migration note: Alpaca market data API (data.alpaca.markets) required a paid
+subscription.  yfinance provides free real-time-ish quotes that work with
+any environment.  Alpaca broker API (paper-api.alpaca.markets) for orders,
+positions, and account remains fully intact.
 """
 from __future__ import annotations
 
@@ -13,10 +18,6 @@ from typing import Any, List, Optional, Sequence
 from textual.message import Message
 
 logger = logging.getLogger(__name__)
-
-# Alpaca market data always comes from data.alpaca.markets,
-# never from paper-api.alpaca.markets (which is order management only).
-ALPACA_DATA_BASE_URL = "https://data.alpaca.markets"
 
 
 # ── Messages posted to Textual queue ────────────────────────────────────
@@ -70,7 +71,12 @@ class MarketErrorMessage(Message):
 
 
 class MarketPoller:
-    """Stateful poller — call ``poll_once`` repeatedly from a worker loop."""
+    """Stateful poller — call ``poll_once`` repeatedly from a worker loop.
+
+    Uses yfinance for market data (free, no subscription required).
+    Alpaca broker API (paper-api.alpaca.markets) is used only for
+    market open/close status via /v2/clock.
+    """
 
     def __init__(
         self,
@@ -78,19 +84,16 @@ class MarketPoller:
         poll_interval_sec: float = 15.0,
     ) -> None:
         if equity_tickers is None:
-            # Configurable via env var, default expanded watchlist
             import os
-            env_list = os.environ.get("ALPACA_WATCHLIST", "").strip()
+            env_list = os.environ.get("GKR_WATCHLIST", os.environ.get("ALPACA_WATCHLIST", "")).strip()
             if env_list:
                 equity_tickers = tuple(t.strip().upper() for t in env_list.split(",") if t.strip())
             else:
                 equity_tickers = ("AAPL", "SPY", "QQQ", "TSLA", "NVDA", "MSFT")
         self._tickers = list(equity_tickers)
         self._interval = poll_interval_sec
-        self._feed: Any = None
-        self._http: Any = None        # paper-api (broker / metadata)
-        self._data_http: Any = None   # data.alpaca.markets (market data)
-        self._metadata: Any = None
+        self._metadata: Any = None  # AlpacaMarketMetadataProvider for clock
+        self._broker_http: Any = None
         self._available = False
         self._last_market_open: Optional[bool] = None
         self._price_history: dict[str, list[int]] = {}
@@ -99,44 +102,30 @@ class MarketPoller:
 
     def _init(self) -> None:
         try:
+            import yfinance  # noqa: F401
+            self._available = True
+            logger.info(
+                f"MarketPoller: yfinance ready, tickers={self._tickers}"
+            )
+        except ImportError:
+            logger.warning("MarketPoller: yfinance not installed — market data unavailable")
+            self._available = False
+            return
+
+        # Optional: Alpaca broker API for market open/close status
+        try:
             from gkr_trading.live.alpaca_config import AlpacaPaperConfig
             from gkr_trading.live.alpaca_http import UrllibAlpacaHttpClient
-            from gkr_trading.live.market_data_feed import (
-                AlpacaMarketDataFeed,
-                MarketDataFeedConfig,
-            )
             from gkr_trading.live.market_metadata_provider import (
                 AlpacaMarketMetadataProvider,
             )
-
-            # Paper-api client — used for broker calls and market status
             cfg = AlpacaPaperConfig.from_env()
-            self._http = UrllibAlpacaHttpClient(config=cfg)
-
-            # Data client — market data snapshots MUST go to data.alpaca.markets
-            data_cfg = AlpacaPaperConfig(
-                api_key=cfg.api_key,
-                secret_key=cfg.secret_key,
-                base_url=ALPACA_DATA_BASE_URL,
-            )
-            self._data_http = UrllibAlpacaHttpClient(config=data_cfg)
-            # Confirm: log the base_url at init time
-            logger.info(f"MarketPoller: data API base_url={ALPACA_DATA_BASE_URL}")
-            logger.info(f"MarketPoller: broker API base_url={cfg.base_url}")
-
-            md_config = MarketDataFeedConfig(
-                equity_tickers=tuple(self._tickers),
-                drop_stale=False,
-            )
-            self._feed = AlpacaMarketDataFeed(
-                http_client=self._data_http, config=md_config
-            )
-            # Metadata (market open/close) uses the paper-api broker client
-            self._metadata = AlpacaMarketMetadataProvider(self._http)
-            self._available = True
+            self._broker_http = UrllibAlpacaHttpClient(config=cfg)
+            self._metadata = AlpacaMarketMetadataProvider(self._broker_http)
+            logger.info(f"MarketPoller: Alpaca broker API ready for clock (base_url={cfg.base_url})")
         except Exception as exc:
-            logger.warning(f"Market data unavailable: {exc}", exc_info=True)
-            self._available = False
+            logger.info(f"MarketPoller: Alpaca broker unavailable for clock (non-fatal): {exc}")
+            self._metadata = None
 
     @property
     def available(self) -> bool:
@@ -166,50 +155,80 @@ class MarketPoller:
         snapshots: list[MarketDataSnapshot] = []
         market_open: Optional[bool] = None
 
-        # Check market status via broker API
+        # Check market status via Alpaca broker API (if available)
         try:
-            market_open = self._metadata.is_market_open()
-        except Exception:
-            pass
+            if self._metadata:
+                market_open = self._metadata.is_market_open()
+        except Exception as exc:
+            logger.debug(f"MarketPoller clock check failed (non-fatal): {exc}")
 
-        # Poll market data via data.alpaca.markets
+        # Poll market data via yfinance
         try:
-            from gkr_trading.core.instruments import EquityRef
-
-            envelopes = self._feed.poll()
-            for env in envelopes:
-                ticker = ""
-                if isinstance(env.instrument_ref, EquityRef):
-                    ticker = env.instrument_ref.ticker
-                else:
-                    ticker = env.instrument_ref.canonical_key
-
-                snap = MarketDataSnapshot(
-                    ticker=ticker,
-                    last_cents=env.last_cents,
-                    bid_cents=env.bid_cents,
-                    ask_cents=env.ask_cents,
-                    open_cents=env.open_cents,
-                    high_cents=env.high_cents,
-                    low_cents=env.low_cents,
-                    close_cents=env.close_cents,
-                    volume=env.volume,
-                    delta=env.delta,
-                    theta=env.theta,
-                    implied_vol=env.implied_vol,
-                )
-                snapshots.append(snap)
-                self._latest_snapshots[ticker] = snap
-
-                # Track price history for sparklines
-                if env.close_cents is not None:
-                    hist = self._price_history.setdefault(ticker, [])
-                    hist.append(env.close_cents)
-                    # Keep last 120 points (30 min at 15s polls)
-                    if len(hist) > 120:
-                        self._price_history[ticker] = hist[-120:]
-
+            snapshots = self._poll_yfinance()
         except Exception as exc:
             logger.error(f"Market data poll error: {exc}")
 
         return snapshots, market_open
+
+    def _poll_yfinance(self) -> list[MarketDataSnapshot]:
+        """Fetch current quotes from yfinance for all tickers."""
+        import yfinance as yf
+
+        snapshots: list[MarketDataSnapshot] = []
+        try:
+            tickers_str = " ".join(self._tickers)
+            tickers_obj = yf.Tickers(tickers_str)
+
+            for ticker_sym in self._tickers:
+                try:
+                    t = tickers_obj.tickers.get(ticker_sym)
+                    if t is None:
+                        logger.warning(f"MarketPoller: yfinance returned None for {ticker_sym}")
+                        continue
+
+                    info = t.fast_info
+                    last_price = getattr(info, "last_price", None)
+                    if last_price is None:
+                        logger.debug(f"MarketPoller: no last_price for {ticker_sym}")
+                        continue
+
+                    open_price = getattr(info, "open", None)
+                    day_high = getattr(info, "day_high", None)
+                    day_low = getattr(info, "day_low", None)
+                    prev_close = getattr(info, "previous_close", None)
+                    last_volume = getattr(info, "last_volume", None)
+
+                    last_cents = int(round(last_price * 100))
+                    open_cents = int(round(open_price * 100)) if open_price else None
+                    high_cents = int(round(day_high * 100)) if day_high else None
+                    low_cents = int(round(day_low * 100)) if day_low else None
+                    prev_close_cents = int(round(prev_close * 100)) if prev_close else None
+                    volume = int(last_volume) if last_volume else None
+
+                    snap = MarketDataSnapshot(
+                        ticker=ticker_sym,
+                        last_cents=last_cents,
+                        open_cents=open_cents,
+                        high_cents=high_cents,
+                        low_cents=low_cents,
+                        close_cents=last_cents,  # close = last for intraday
+                        volume=volume,
+                        prev_close_cents=prev_close_cents,
+                    )
+                    snapshots.append(snap)
+                    self._latest_snapshots[ticker_sym] = snap
+
+                    # Track price history for sparklines
+                    hist = self._price_history.setdefault(ticker_sym, [])
+                    hist.append(last_cents)
+                    if len(hist) > 120:
+                        self._price_history[ticker_sym] = hist[-120:]
+
+                except Exception as exc:
+                    logger.warning(f"MarketPoller: failed to fetch {ticker_sym}: {exc}")
+
+        except Exception as exc:
+            logger.error(f"MarketPoller yfinance batch error: {exc}")
+
+        logger.info(f"MarketPoller: polled {len(snapshots)}/{len(self._tickers)} tickers via yfinance")
+        return snapshots
