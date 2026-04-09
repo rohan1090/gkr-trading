@@ -556,6 +556,19 @@ def paper_v2_certify_cmd(
             raise typer.Exit(code=1)
 
 
+@app.command("tui")
+def tui_cmd(
+    db_path: str = typer.Option(..., "--db-path", help="Path to SQLite database."),
+    session_id: str | None = typer.Option(
+        None, "--session-id", help="Pre-select a session on launch.",
+    ),
+) -> None:
+    """Launch the interactive GKR Trading TUI dashboard."""
+    from gkr_trading.tui.app import GKRTradingApp
+    tui = GKRTradingApp(db_path=db_path, initial_session_id=session_id)
+    tui.run()
+
+
 def main() -> None:
     app()
 
