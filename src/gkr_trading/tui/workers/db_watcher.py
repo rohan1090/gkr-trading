@@ -208,6 +208,137 @@ class DBWatcher:
         finally:
             conn.close()
 
+    def get_strategy_daily_summary(self, date_str: str) -> dict[str, dict]:
+        """Return per-strategy stats for a given date (ISO format '2026-04-09').
+
+        Returns:
+            {
+              "equity_momentum": {
+                "trade_count": 3,
+                "fill_count": 3,
+                "pnl_cents": 0,
+                "session_id": "...",
+                "status": "running",
+              }
+            }
+        """
+        conn = self._get_conn()
+        if not conn:
+            return {}
+        try:
+            # Find all sessions that have events on the given date
+            cur = conn.execute(
+                "SELECT DISTINCT session_id FROM events "
+                "WHERE envelope_json LIKE ?",
+                (f"%{date_str}%",),
+            )
+            session_ids = [row[0] for row in cur.fetchall()]
+
+            result: dict[str, dict] = {}
+            for sid in session_ids:
+                strategy = ""
+                status = "unknown"
+                trade_count = 0
+                fill_count = 0
+
+                # Get all events for this session
+                ev_cur = conn.execute(
+                    "SELECT envelope_json FROM events "
+                    "WHERE session_id = ? ORDER BY seq ASC",
+                    (sid,),
+                )
+                rows = ev_cur.fetchall()
+                for row in rows:
+                    try:
+                        from gkr_trading.core.events import loads_event
+                        ev = loads_event(row[0])
+                        et = ev.event_type.value
+
+                        if et == "session_started":
+                            p = ev.payload
+                            if hasattr(p, "strategy_id"):
+                                strategy = p.strategy_id
+                            elif isinstance(p, dict):
+                                strategy = p.get("strategy_id", "")
+                            status = "running"
+                        elif et == "session_stopped":
+                            status = "stopped"
+                        elif et == "trade_intent_created":
+                            trade_count += 1
+                        elif et == "fill_received":
+                            fill_count += 1
+                    except Exception:
+                        pass
+
+                key = strategy or f"unknown_{sid[:8]}"
+                result[key] = {
+                    "trade_count": trade_count,
+                    "fill_count": fill_count,
+                    "pnl_cents": 0,  # Would need fill price data for accurate P&L
+                    "session_id": sid,
+                    "status": status,
+                }
+            return result
+        except Exception as exc:
+            logger.error(f"get_strategy_daily_summary error: {exc}")
+            return {}
+        finally:
+            conn.close()
+
+    def get_sessions_with_dates(self) -> list[dict]:
+        """Return sessions enriched with dates for History tab display.
+
+        Each dict has:
+          - session_id, event_count, status, strategy, stop_reason, max_seq
+          - date_str: "Apr 9 2026" from first event
+          - started_at: ISO timestamp of first event
+          - is_today: bool
+        Sorted most recent first.
+        """
+        from datetime import date, datetime
+
+        sessions = self.list_sessions()
+        conn = self._get_conn()
+        if not conn:
+            return sessions
+
+        today = date.today()
+        try:
+            for s in sessions:
+                sid = s["session_id"]
+                # Get timestamp of first event
+                cur = conn.execute(
+                    "SELECT envelope_json FROM events "
+                    "WHERE session_id = ? ORDER BY seq ASC LIMIT 1",
+                    (sid,),
+                )
+                row = cur.fetchone()
+                if row:
+                    try:
+                        from gkr_trading.core.events import loads_event
+                        ev = loads_event(row[0])
+                        ts = ev.occurred_at_utc
+                        s["started_at"] = ts
+                        # Parse date from ISO timestamp
+                        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        event_date = dt.date()
+                        s["date_str"] = event_date.strftime("%b %-d %Y")
+                        s["is_today"] = (event_date == today)
+                    except Exception:
+                        s["started_at"] = ""
+                        s["date_str"] = "Unknown date"
+                        s["is_today"] = False
+                else:
+                    s["started_at"] = ""
+                    s["date_str"] = "Unknown date"
+                    s["is_today"] = False
+            return sessions
+        except Exception as exc:
+            logger.error(f"get_sessions_with_dates error: {exc}")
+            return sessions
+        finally:
+            conn.close()
+
     def get_session_events(self, session_id: str) -> list[EventSummary]:
         """Load all events for a session (not just new ones)."""
         if not session_id:

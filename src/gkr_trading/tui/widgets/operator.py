@@ -8,6 +8,7 @@ from typing import Optional
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, DataTable, Label, Static
 
 
@@ -24,11 +25,11 @@ class ReconcileAction(Message):
     pass
 
 
-class KillSwitchPanel(Static):
+class KillSwitchPanel(Widget):
     """Kill switch section with three toggle buttons."""
 
     def compose(self) -> ComposeResult:
-        yield Label(" Kill Switch", classes="section-header")
+        yield Label("KILL SWITCH", classes="section-label")
         yield Static("", id="ks-current-level")
         with Horizontal(id="ks-buttons"):
             yield Button("NONE", id="ks-none", classes="ks-none")
@@ -38,16 +39,16 @@ class KillSwitchPanel(Static):
     def update_level(self, level: str) -> None:
         label = self.query_one("#ks-current-level", Static)
         if level == "none":
-            label.update("[#6daa45 bold]Kill Switch: NONE (all trading enabled)[/]")
+            label.update("[#00e676 bold]Kill Switch: NONE (all trading enabled)[/]")
             self._set_active("ks-none")
         elif level == "close_only":
-            label.update("[#fdab43 bold]Kill Switch: CLOSE ONLY (no new opens)[/]")
+            label.update("[#ffb300 bold]Kill Switch: CLOSE ONLY (no new opens)[/]")
             self._set_active("ks-close-only")
         elif level == "full_halt":
-            label.update("[#dd6974 bold]Kill Switch: FULL HALT (all blocked)[/]")
+            label.update("[#ff4444 bold]Kill Switch: FULL HALT (all blocked)[/]")
             self._set_active("ks-full-halt")
         else:
-            label.update(f"[#797876]Kill Switch: {level}[/]")
+            label.update(f"[#444444]Kill Switch: {level}[/]")
 
     def _set_active(self, active_id: str) -> None:
         for btn_id in ("ks-none", "ks-close-only", "ks-full-halt"):
@@ -69,11 +70,11 @@ class KillSwitchPanel(Static):
             self.post_message(KillSwitchAction(level))
 
 
-class ReconciliationPanel(Static):
+class ReconciliationPanel(Widget):
     """Reconciliation section with trigger button and results table."""
 
     def compose(self) -> ComposeResult:
-        yield Label(" Reconciliation", classes="section-header")
+        yield Label("RECONCILIATION", classes="section-label")
         yield Button("Reconcile Now", id="btn-reconcile", classes="btn-accent")
         yield Static("", id="recon-status")
         yield DataTable(id="recon-table", cursor_type="none")
@@ -90,18 +91,18 @@ class ReconciliationPanel(Static):
     def show_results(self, status: str, breaks: list[dict]) -> None:
         status_widget = self.query_one("#recon-status", Static)
         if status == "clean":
-            status_widget.update("[#6daa45 bold]  CLEAN[/]")
+            status_widget.update("[#00e676 bold]CLEAN[/]")
         else:
-            status_widget.update("[#dd6974 bold]  BREAKS DETECTED[/]")
+            status_widget.update("[#ff4444 bold]BREAKS DETECTED[/]")
 
         table = self.query_one("#recon-table", DataTable)
         table.clear()
         for b in breaks:
             severity = b.get("severity", "?")
             if severity == "blocking":
-                sev_display = "[#dd6974 bold]BLOCKING[/]"
+                sev_display = "[#ff4444 bold]BLOCKING[/]"
             elif severity == "warning":
-                sev_display = "[#fdab43]WARNING[/]"
+                sev_display = "[#ffb300]WARNING[/]"
             else:
                 sev_display = severity
             table.add_row(
@@ -113,14 +114,14 @@ class ReconciliationPanel(Static):
 
     def show_error(self, error: str) -> None:
         status_widget = self.query_one("#recon-status", Static)
-        status_widget.update(f"[#dd6974]Error: {error}[/]")
+        status_widget.update(f"[#ff4444]Error: {error}[/]")
 
 
-class AlertsPanel(Static):
+class AlertsPanel(Widget):
     """Alerts section — notable events from the stream."""
 
     def compose(self) -> ComposeResult:
-        yield Label(" Alerts", classes="section-header")
+        yield Label("ALERTS", classes="section-label")
         yield DataTable(id="alerts-table", cursor_type="none")
 
     def on_mount(self) -> None:
@@ -148,11 +149,11 @@ class AlertsPanel(Static):
             ts = ev.occurred_at[:19] if len(ev.occurred_at) > 19 else ev.occurred_at
             etype = ev.event_type.replace("_", " ").title()
 
-            color = "#fdab43"
+            color = "#ffb300"
             if "reject" in ev.event_type:
-                color = "#dd6974"
+                color = "#ff4444"
             elif "assignment" in ev.event_type:
-                color = "#dd6974"
+                color = "#ff4444"
 
             table.add_row(
                 ts,

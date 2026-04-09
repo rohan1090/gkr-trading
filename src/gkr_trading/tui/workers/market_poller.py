@@ -74,9 +74,17 @@ class MarketPoller:
 
     def __init__(
         self,
-        equity_tickers: Sequence[str] = ("AAPL", "SPY"),
+        equity_tickers: Sequence[str] | None = None,
         poll_interval_sec: float = 15.0,
     ) -> None:
+        if equity_tickers is None:
+            # Configurable via env var, default expanded watchlist
+            import os
+            env_list = os.environ.get("ALPACA_WATCHLIST", "").strip()
+            if env_list:
+                equity_tickers = tuple(t.strip().upper() for t in env_list.split(",") if t.strip())
+            else:
+                equity_tickers = ("AAPL", "SPY", "QQQ", "TSLA", "NVDA", "MSFT")
         self._tickers = list(equity_tickers)
         self._interval = poll_interval_sec
         self._feed: Any = None
@@ -86,6 +94,7 @@ class MarketPoller:
         self._available = False
         self._last_market_open: Optional[bool] = None
         self._price_history: dict[str, list[int]] = {}
+        self._latest_snapshots: dict[str, MarketDataSnapshot] = {}
         self._init()
 
     def _init(self) -> None:
@@ -135,6 +144,10 @@ class MarketPoller:
         """Return collected close prices for sparkline charting."""
         return list(self._price_history.get(ticker, []))
 
+    def get_all_snapshots(self) -> dict[str, MarketDataSnapshot]:
+        """Return the most recent snapshot for each ticker as a dict."""
+        return dict(self._latest_snapshots)
+
     def poll_once(self) -> tuple[list[MarketDataSnapshot], Optional[bool]]:
         """Execute one poll cycle.
 
@@ -180,6 +193,7 @@ class MarketPoller:
                     implied_vol=env.implied_vol,
                 )
                 snapshots.append(snap)
+                self._latest_snapshots[ticker] = snap
 
                 # Track price history for sparklines
                 if env.close_cents is not None:

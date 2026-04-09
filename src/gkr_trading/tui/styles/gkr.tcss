@@ -1,7 +1,17 @@
-/* GKR Trading TUI — dark theme */
+/* GKR Trading TUI — Bloomberg terminal aesthetic
+ *
+ * Palette:
+ *   Background:     #0d0d0d   Surface:        #111111
+ *   Surface-raised: #161616   Border:         #222222
+ *   Border-bright:  #333333   Text:           #e0e0e0
+ *   Text-muted:     #666666   Text-faint:     #3a3a3a
+ *   Accent (teal):  #00c9a7   Accent-dim:     #004d40
+ *   Green:          #00e676   Red:            #ff4444
+ *   Gold:           #ffb300   Blue:           #42a5f5
+ */
 
 Screen {
-    background: #171614;
+    background: #0d0d0d;
 }
 
 /* ── Header ─────────────────────────────────────────────────── */
@@ -9,33 +19,30 @@ Screen {
 #header-bar {
     dock: top;
     height: 3;
-    background: #1c1b19;
-    border-bottom: solid #393836;
-    padding: 0 1;
+    background: #111111;
+    border-bottom: solid #222222;
+    padding: 0 2;
     layout: horizontal;
 }
 
 #header-logo {
     width: auto;
-    min-width: 16;
-    color: #e8af34;
+    min-width: 20;
+    color: #ffb300;
     text-style: bold;
-    padding: 1 2 0 1;
+    content-align: left middle;
 }
 
-#header-session-info {
+#header-ticker-tape {
     width: 1fr;
-    color: #cdccca;
+    color: #e0e0e0;
     content-align: center middle;
-    padding: 1 0 0 0;
 }
 
 #header-right {
     width: auto;
-    min-width: 30;
-    color: #797876;
+    min-width: 22;
     content-align: right middle;
-    padding: 1 1 0 0;
 }
 
 /* ── Tab navigation ─────────────────────────────────────────── */
@@ -49,34 +56,39 @@ TabPane {
 }
 
 Tabs {
-    background: #1c1b19;
+    background: #111111;
     dock: top;
 }
 
 Tab {
-    color: #797876;
-    background: #1c1b19;
-    padding: 0 2;
+    color: #444444;
+    background: #111111;
+    padding: 0 3;
 }
 
 Tab.-active {
-    color: #4f98a3;
+    color: #00c9a7;
     text-style: bold;
-    border-bottom: solid #4f98a3;
+    background: #0d1a17;
 }
 
 Tab:hover {
-    color: #cdccca;
+    color: #888888;
+    background: #141414;
+}
+
+Tab.-active:hover {
+    color: #00c9a7;
 }
 
 /* ── Footer event log ───────────────────────────────────────── */
 
 #footer-log {
     dock: bottom;
-    height: 8;
-    background: #1c1b19;
-    border-top: solid #393836;
-    padding: 0 1;
+    height: 5;
+    background: #0a0a0a;
+    border-top: solid #1a1a1a;
+    padding: 0 2;
     overflow-y: auto;
 }
 
@@ -88,118 +100,170 @@ Tab:hover {
 /* ── Panels / containers ────────────────────────────────────── */
 
 .panel {
-    background: #1c1b19;
-    border: solid #393836;
-    margin: 0 0 0 0;
+    background: #111111;
+    border: solid #222222;
     padding: 0 1;
+    margin: 0;
+}
+
+.panel:focus-within {
+    border: solid #00c9a7;
 }
 
 .panel-title {
-    color: #cdccca;
+    color: #e0e0e0;
     text-style: bold;
     padding: 1 0 0 0;
     height: 2;
 }
 
-.section-header {
-    color: #e8af34;
+.section-label {
+    color: #444444;
     text-style: bold;
+    height: 1;
     padding: 1 0 0 0;
-    height: 2;
 }
 
 /* ── DataTable styling ──────────────────────────────────────── */
 
 DataTable {
     height: 1fr;
-    background: #1c1b19;
+    background: #111111;
 }
 
 DataTable > .datatable--header {
-    color: #797876;
+    color: #444444;
     text-style: bold;
-    background: #1c1b19;
+    background: #0d0d0d;
 }
 
 DataTable > .datatable--cursor {
-    background: #4f98a3 15%;
-    color: #cdccca;
+    background: #004d40;
+    color: #e0e0e0;
 }
 
 DataTable > .datatable--hover {
-    background: #4f98a3 10%;
+    background: #161616;
 }
 
 DataTable > .datatable--even-row {
-    background: #1c1b19;
+    background: #111111;
 }
 
 DataTable > .datatable--odd-row {
-    background: #171614;
+    background: #0d0d0d;
 }
 
 /* ── Buttons ────────────────────────────────────────────────── */
 
 Button {
     margin: 0 1;
-    min-width: 16;
+    min-width: 10;
+    border: solid #333333;
+    background: #111111;
+    color: #888888;
+}
+
+Button:hover {
+    background: #161616;
+    color: #e0e0e0;
+    border: solid #444444;
 }
 
 Button.btn-accent {
-    background: #4f98a3;
-    color: #171614;
+    background: #004d40;
+    color: #00c9a7;
+    border: solid #00c9a7;
 }
 
 Button.btn-accent:hover {
-    background: #5fb0bd;
-}
-
-Button.btn-warning {
-    background: #fdab43;
-    color: #171614;
-}
-
-Button.btn-warning:hover {
-    background: #ffc66e;
+    background: #006655;
+    color: #00e5bb;
 }
 
 Button.btn-danger {
-    background: #dd6974;
-    color: #171614;
+    background: #3d0a0a;
+    color: #ff4444;
+    border: solid #ff4444;
 }
 
 Button.btn-danger:hover {
-    background: #e8899b;
+    background: #550f0f;
+}
+
+Button.btn-warning {
+    background: #3d2500;
+    color: #ffb300;
+    border: solid #ffb300;
+}
+
+Button.btn-warning:hover {
+    background: #553300;
+    color: #ffc933;
 }
 
 Button.btn-success {
-    background: #6daa45;
-    color: #171614;
+    background: #003d1a;
+    color: #00e676;
+    border: solid #00e676;
 }
 
 /* ── Kill switch buttons ────────────────────────────────────── */
 
 .ks-active {
     text-style: bold;
-    border: solid #cdccca;
+    border: solid #e0e0e0;
 }
 
 .ks-none {
-    background: #6daa45;
-    color: #171614;
+    background: #003d1a;
+    color: #00e676;
+    border: solid #00e676;
 }
 
 .ks-close-only {
-    background: #fdab43;
-    color: #171614;
+    background: #3d2500;
+    color: #ffb300;
+    border: solid #ffb300;
 }
 
 .ks-full-halt {
-    background: #dd6974;
-    color: #171614;
+    background: #3d0a0a;
+    color: #ff4444;
+    border: solid #ff4444;
+}
+
+/* ── P&L colors ─────────────────────────────────────────────── */
+
+.pnl-positive {
+    color: #00e676;
+    text-style: bold;
+}
+
+.pnl-negative {
+    color: #ff4444;
+    text-style: bold;
+}
+
+.pnl-zero {
+    color: #444444;
 }
 
 /* ── Status badges ──────────────────────────────────────────── */
+
+.status-running {
+    color: #00e676;
+    text-style: bold;
+}
+
+.status-stopped {
+    color: #444444;
+}
+
+.status-halted {
+    color: #ff4444;
+    text-style: bold;
+}
 
 .badge {
     padding: 0 1;
@@ -207,76 +271,128 @@ Button.btn-success {
     width: auto;
 }
 
-.badge-running {
-    color: #4f98a3;
-    text-style: bold;
-}
-
-.badge-stopped {
-    color: #797876;
-}
-
-.badge-halted {
-    color: #dd6974;
-    text-style: bold;
-}
-
 .badge-clean {
-    color: #6daa45;
+    color: #00e676;
     text-style: bold;
 }
 
 .badge-break {
-    color: #dd6974;
+    color: #ff4444;
     text-style: bold;
 }
 
 .badge-market-open {
-    color: #6daa45;
+    color: #00e676;
 }
 
 .badge-market-closed {
-    color: #797876;
+    color: #444444;
 }
 
-/* ── PnL colors ─────────────────────────────────────────────── */
+/* ── Strategy cards (full control view) ─────────────────────── */
 
-.pnl-positive {
-    color: #6daa45;
+.strategy-card {
+    height: 5;
+    background: #111111;
+    border: solid #222222;
+    padding: 0 1;
+    margin: 0 0 1 0;
 }
 
-.pnl-negative {
-    color: #dd6974;
+.strategy-card.-active {
+    border: solid #004d40;
+    background: #0a1a15;
 }
 
-.pnl-zero {
-    color: #797876;
+.strategy-card.-halted {
+    border: solid #3d0a0a;
+    background: #160a0a;
 }
 
-/* ── Text styles ────────────────────────────────────────────── */
-
-.text-muted {
-    color: #797876;
+.scard-row {
+    height: 1;
+    layout: horizontal;
+    padding: 0;
 }
 
-.text-accent {
-    color: #4f98a3;
+.scard-name {
+    width: auto;
+    min-width: 24;
 }
 
-.text-gold {
-    color: #e8af34;
+.scard-status {
+    width: auto;
+    min-width: 16;
 }
 
-.text-warn {
-    color: #fdab43;
+.scard-pnl {
+    width: auto;
+    min-width: 12;
 }
 
-.text-error {
-    color: #dd6974;
+.scard-info {
+    width: 1fr;
 }
 
-.text-success {
-    color: #6daa45;
+.scard-summary {
+    height: 3;
+    layout: horizontal;
+    padding: 1 0;
+    content-align: left middle;
+}
+
+/* ── Strategy allocation rows (compact sidebar) ─────────────── */
+
+.alloc-row {
+    height: 2;
+    layout: horizontal;
+    padding: 0;
+    content-align: left middle;
+}
+
+.alloc-toggle {
+    min-width: 3;
+    max-width: 3;
+    border: none;
+    background: transparent;
+    color: #00c9a7;
+    margin: 0;
+    padding: 0;
+}
+
+.alloc-name {
+    width: 1fr;
+    color: #888888;
+}
+
+.alloc-pct {
+    width: auto;
+    min-width: 5;
+    color: #e0e0e0;
+}
+
+.alloc-btn {
+    min-width: 3;
+    max-width: 3;
+    margin: 0;
+    padding: 0;
+}
+
+.alloc-summary-line {
+    height: 1;
+    padding: 1 0 0 0;
+    color: #666666;
+}
+
+/* ── Account summary bar ────────────────────────────────────── */
+
+.account-summary-bar {
+    height: 2;
+    background: #0a0a0a;
+    border-top: solid #1a1a1a;
+    padding: 0 1;
+    content-align: left middle;
+    color: #888888;
 }
 
 /* ── Layout helpers ─────────────────────────────────────────── */
@@ -297,6 +413,22 @@ Button.btn-success {
 
 .right-70 {
     width: 70%;
+}
+
+.left-35 {
+    width: 35%;
+}
+
+.right-65 {
+    width: 65%;
+}
+
+.left-65 {
+    width: 65%;
+}
+
+.right-35 {
+    width: 35%;
 }
 
 .top-half {
@@ -321,21 +453,21 @@ ConfirmScreen {
     width: 60;
     height: auto;
     max-height: 16;
-    background: #1c1b19;
-    border: thick #393836;
+    background: #161616;
+    border: thick #333333;
     padding: 1 2;
 }
 
 #confirm-dialog #confirm-title {
     text-style: bold;
-    color: #fdab43;
+    color: #ffb300;
     padding: 0 0 1 0;
     width: 100%;
     text-align: center;
 }
 
 #confirm-dialog #confirm-message {
-    color: #cdccca;
+    color: #e0e0e0;
     padding: 0 0 1 0;
     width: 100%;
 }
@@ -352,49 +484,9 @@ ConfirmScreen {
 
 #chart-panel {
     height: 50%;
-    background: #1c1b19;
-    border: solid #393836;
+    background: #111111;
+    border: solid #222222;
     padding: 0 1;
-}
-
-/* ── Info / stat boxes ──────────────────────────────────────── */
-
-.stat-grid {
-    layout: grid;
-    grid-size: 4 2;
-    grid-gutter: 1;
-    padding: 1;
-    height: auto;
-}
-
-.stat-box {
-    height: 3;
-    padding: 0 1;
-    background: #171614;
-    border: solid #393836;
-    content-align: center middle;
-}
-
-.stat-label {
-    color: #797876;
-    text-style: italic;
-}
-
-.stat-value {
-    color: #cdccca;
-    text-style: bold;
-}
-
-/* ── Session panels ────────────────────────────────────────── */
-
-SessionListPanel {
-    height: 1fr;
-    width: 100%;
-}
-
-SessionDetailPanel {
-    height: 1fr;
-    width: 100%;
 }
 
 /* ── Scrollable containers ──────────────────────────────────── */
@@ -408,15 +500,80 @@ SessionDetailPanel {
 
 .empty-state {
     content-align: center middle;
-    color: #797876;
+    color: #333333;
     height: 1fr;
     padding: 2;
 }
 
 .warning-banner {
-    background: #fdab43 15%;
-    color: #fdab43;
+    background: #3d2500;
+    color: #ffb300;
     padding: 1 2;
     height: 3;
     text-align: center;
+}
+
+/* ── Session panels (legacy, kept for Widget subclass) ──────── */
+
+SessionListPanel {
+    height: 1fr;
+    width: 100%;
+}
+
+SessionDetailPanel {
+    height: 1fr;
+    width: 100%;
+}
+
+/* ── New widget panels ──────────────────────────────────────── */
+
+LivePositionsTable {
+    height: 1fr;
+    width: 100%;
+}
+
+AccountSummaryBar {
+    height: auto;
+    width: 100%;
+}
+
+StrategyAllocationPanel {
+    height: 1fr;
+    width: 100%;
+}
+
+StrategyControlPanel {
+    height: 1fr;
+    width: 100%;
+}
+
+TradingHistoryPanel {
+    height: 1fr;
+    width: 100%;
+}
+
+/* ── Text utility classes ───────────────────────────────────── */
+
+.text-muted {
+    color: #666666;
+}
+
+.text-accent {
+    color: #00c9a7;
+}
+
+.text-gold {
+    color: #ffb300;
+}
+
+.text-warn {
+    color: #ffb300;
+}
+
+.text-error {
+    color: #ff4444;
+}
+
+.text-success {
+    color: #00e676;
 }

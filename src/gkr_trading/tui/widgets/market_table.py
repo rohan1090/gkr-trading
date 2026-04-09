@@ -7,6 +7,7 @@ from typing import Optional
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import DataTable, Label, Static
 
 
@@ -34,17 +35,16 @@ def _fmt_volume(vol: Optional[int]) -> str:
     return str(vol)
 
 
-class MarketDataTable(Static):
-    """Top panel: live ticker prices in a DataTable."""
+class MarketDataTable(Widget):
+    """Live ticker prices in a DataTable."""
 
     def compose(self) -> ComposeResult:
-        yield Label(" Market Data", classes="section-header")
         yield DataTable(id="market-table", cursor_type="row")
 
     def on_mount(self) -> None:
         table = self.query_one("#market-table", DataTable)
         table.add_columns(
-            "Ticker", "Last", "Bid", "Ask", "Open", "High", "Low", "Volume", "Chg", "Chg%"
+            "TICKER", "LAST", "BID", "ASK", "OPEN", "HIGH", "LOW", "VOLUME", "CHG", "CHG%"
         )
         table.zebra_stripes = True
 
@@ -65,7 +65,7 @@ class MarketDataTable(Static):
                 chg = last - open_p
                 chg_pct = (chg / open_p) * 100
                 sign = "+" if chg >= 0 else ""
-                color = "#6daa45" if chg >= 0 else "#dd6974"
+                color = "#00e676" if chg >= 0 else "#ff4444"
                 chg_str = f"[{color}]{sign}${chg / 100:.2f}[/]"
                 chg_pct_str = f"[{color}]{sign}{chg_pct:.2f}%[/]"
 
@@ -88,13 +88,12 @@ class MarketDataTable(Static):
             self.post_message(TickerSelected(event.row_key.value))
 
 
-class SparklinePanel(Static):
-    """Bottom panel: ASCII sparkline chart for selected ticker."""
+class SparklinePanel(Widget):
+    """ASCII sparkline chart for selected ticker."""
 
     def compose(self) -> ComposeResult:
-        yield Label(" Price Chart", classes="section-header")
         yield Static(
-            "[#797876]Click a ticker above to show price chart[/]",
+            "[#444444]Click a ticker to show price chart[/]",
             id="sparkline-content",
         )
 
@@ -103,7 +102,7 @@ class SparklinePanel(Static):
         content = self.query_one("#sparkline-content", Static)
 
         if not prices or len(prices) < 2:
-            content.update(f"[#797876]{ticker}: Not enough data for chart[/]")
+            content.update(f"[#444444]{ticker}: Not enough data for chart[/]")
             return
 
         try:
@@ -126,16 +125,16 @@ class SparklinePanel(Static):
             chart_text = buf.getvalue()
             content.update(chart_text)
         except Exception as exc:
-            content.update(f"[#dd6974]Chart error: {exc}[/]")
+            content.update(f"[#ff4444]Chart error: {exc}[/]")
 
     def show_no_credentials(self) -> None:
         content = self.query_one("#sparkline-content", Static)
         content.update(
-            "[#fdab43]No Alpaca credentials — market data unavailable[/]"
+            "[#ffb300]No Alpaca credentials — market data unavailable[/]"
         )
 
     def show_market_closed(self) -> None:
         content = self.query_one("#sparkline-content", Static)
         content.update(
-            "[#797876]Market closed — showing last available data[/]"
+            "[#444444]Market closed — showing last available data[/]"
         )
