@@ -385,6 +385,18 @@ ConfirmScreen {
     text-style: bold;
 }
 
+/* ── Session panels ────────────────────────────────────────── */
+
+SessionListPanel {
+    height: 1fr;
+    width: 100%;
+}
+
+SessionDetailPanel {
+    height: 1fr;
+    width: 100%;
+}
+
 /* ── Scrollable containers ──────────────────────────────────── */
 
 .scroll-panel {

@@ -100,9 +100,11 @@ class GKRTradingApp(App):
         self.run_worker(self._market_poll_loop, name="market-poller", thread=True)
 
     def _initial_load(self) -> None:
-        """Load initial data after screen is mounted."""
-        self._refresh_sessions()
+        # Defer until after full mount cycle completes
+        self.set_timer(0.5, self._do_initial_load)
 
+    def _do_initial_load(self) -> None:
+        self._refresh_sessions()
         if self._active_session_id:
             self.set_active_session(self._active_session_id)
         elif self._sessions:
@@ -163,7 +165,8 @@ class GKRTradingApp(App):
             panel = self.query_one("#session-list-panel", SessionListPanel)
             panel.update_sessions(self._sessions)
         except Exception:
-            pass
+            # Retry after mount completes
+            self.set_timer(0.5, lambda: self._update_session_ui())
 
     def _on_new_events(self, events: list[EventSummary]) -> None:
         try:

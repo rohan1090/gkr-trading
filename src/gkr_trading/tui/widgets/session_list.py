@@ -4,6 +4,7 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, DataTable, Label, Static
 
 
@@ -15,7 +16,7 @@ class SessionSelected(Message):
         self.session_id = session_id
 
 
-class SessionListPanel(Static):
+class SessionListPanel(Widget):
     """Left panel: scrollable list of sessions."""
 
     def compose(self) -> ComposeResult:
@@ -64,7 +65,7 @@ class SessionListPanel(Static):
             self.post_message(SessionSelected(event.row_key.value))
 
 
-class SessionDetailPanel(Static):
+class SessionDetailPanel(Widget):
     """Right panel: active session stats."""
 
     def compose(self) -> ComposeResult:

@@ -119,6 +119,28 @@ class MainScreen(Screen):
         table.add_columns("Index", "Event Type", "Code", "Message")
         table.zebra_stripes = True
 
+        # Start live clock
+        self.set_interval(1.0, self._tick_clock)
+
+    def _tick_clock(self) -> None:
+        from datetime import datetime
+        import zoneinfo
+        et = zoneinfo.ZoneInfo("America/New_York")
+        now = datetime.now(et)
+        time_str = now.strftime("%H:%M:%S ET")
+        try:
+            right = self.query_one("#header-right", Static)
+            # Preserve market status if already set, just update time
+            current = right.renderable
+            if "OPEN" in str(current):
+                right.update(f"[#6daa45]OPEN[/]  [#797876]{time_str}[/]")
+            elif "CLOSED" in str(current):
+                right.update(f"[#797876]CLOSED  {time_str}[/]")
+            else:
+                right.update(f"[#797876]{time_str}[/]")
+        except Exception:
+            pass
+
     # ── Tab switching ──
 
     def action_switch_tab(self, tab_id: str) -> None:
