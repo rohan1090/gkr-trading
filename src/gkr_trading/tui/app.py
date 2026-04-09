@@ -138,10 +138,16 @@ class GKRTradingApp(App):
                 timeout=5,
             )
 
-        # Install main screen
+        # Defer screen push until after the first render cycle — pushing
+        # MainScreen directly in on_mount causes a blank black screen because
+        # Textual's compositor isn't ready yet.
+        self.call_after_refresh(self._mount_main_screen)
+
+    def _mount_main_screen(self) -> None:
+        """Push MainScreen after the compositor is ready."""
         self.push_screen(MainScreen())
 
-        # Initial data load
+        # Initial data load (further deferred to let MainScreen fully compose)
         self.call_after_refresh(self._initial_load)
 
         # Start background workers
