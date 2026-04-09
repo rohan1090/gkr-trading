@@ -14,6 +14,10 @@ from textual.message import Message
 
 logger = logging.getLogger(__name__)
 
+# Alpaca market data always comes from data.alpaca.markets,
+# never from paper-api.alpaca.markets (which is order management only).
+ALPACA_DATA_BASE_URL = "https://data.alpaca.markets"
+
 
 # ── Messages posted to Textual queue ────────────────────────────────────
 
@@ -76,7 +80,8 @@ class MarketPoller:
         self._tickers = list(equity_tickers)
         self._interval = poll_interval_sec
         self._feed: Any = None
-        self._http: Any = None
+        self._http: Any = None        # paper-api (broker / metadata)
+        self._data_http: Any = None   # data.alpaca.markets (market data)
         self._metadata: Any = None
         self._available = False
         self._last_market_open: Optional[bool] = None
@@ -95,10 +100,23 @@ class MarketPoller:
                 AlpacaMarketMetadataProvider,
             )
 
+            # Paper-api client — used for broker calls and market status
             cfg = AlpacaPaperConfig.from_env()
             self._http = UrllibAlpacaHttpClient(config=cfg)
+
+            # Data client — market data snapshots MUST go to data.alpaca.markets
+            data_cfg = AlpacaPaperConfig(
+                api_key=cfg.api_key,
+                secret_key=cfg.secret_key,
+                base_url=ALPACA_DATA_BASE_URL,
+            )
+            self._data_http = UrllibAlpacaHttpClient(config=data_cfg)
+
             md_config = MarketDataFeedConfig(equity_tickers=tuple(self._tickers))
-            self._feed = AlpacaMarketDataFeed(http_client=self._http, config=md_config)
+            self._feed = AlpacaMarketDataFeed(
+                http_client=self._data_http, config=md_config
+            )
+            # Metadata (market open/close) uses the paper-api broker client
             self._metadata = AlpacaMarketMetadataProvider(self._http)
             self._available = True
         except Exception as exc:
@@ -129,13 +147,13 @@ class MarketPoller:
         snapshots: list[MarketDataSnapshot] = []
         market_open: Optional[bool] = None
 
-        # Check market status
+        # Check market status via broker API
         try:
             market_open = self._metadata.is_market_open()
         except Exception:
             pass
 
-        # Poll market data
+        # Poll market data via data.alpaca.markets
         try:
             from gkr_trading.core.instruments import EquityRef
 
