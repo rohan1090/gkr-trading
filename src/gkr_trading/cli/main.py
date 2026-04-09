@@ -503,6 +503,9 @@ def paper_v2_continuous_cmd(
     no_websocket: bool = typer.Option(
         False, "--no-websocket", help="Disable WebSocket.",
     ),
+    no_pause: bool = typer.Option(
+        False, "--no-pause", help="Stop on market close instead of pausing.",
+    ),
     as_json: bool = typer.Option(
         False, "--json", help="Output as JSON only.",
     ),
@@ -567,6 +570,61 @@ def tui_cmd(
     from gkr_trading.tui.app import GKRTradingApp
     tui = GKRTradingApp(db_path=db_path, initial_session_id=session_id)
     tui.run()
+
+
+@app.command("observe")
+def observe_cmd(
+    db_path: str = typer.Option("./gkr.db", "--db-path", help="Path to SQLite database."),
+    tickers: str | None = typer.Option(
+        None, "--tickers", help="Comma-separated equity tickers to poll.",
+    ),
+    interval: float = typer.Option(
+        15.0, "--interval", help="Snapshot poll interval in seconds.",
+    ),
+) -> None:
+    """Start the ObservationPlane as a standalone daemon.
+
+    Continuously collects market data and positions to SQLite (+ Supabase
+    if configured).  No TUI, no trading — just data collection.
+    """
+    import os
+    import signal
+
+    if tickers:
+        os.environ["ALPACA_EQUITY_TICKERS"] = tickers
+
+    from gkr_trading.live.observation_plane import ObservationPlane
+
+    plane = ObservationPlane(
+        db_path=db_path,
+        alpaca_snapshot_interval=interval,
+    )
+    plane.start()
+
+    supabase_status = "enabled" if os.environ.get("SUPABASE_URL") else "disabled"
+    ticker_list = plane.get_tickers()
+
+    typer.echo("GKR Observation Plane started")
+    typer.echo(f"Polling {len(ticker_list)} equity tickers every {interval}s")
+    typer.echo(f"Writing to: {db_path}")
+    typer.echo(f"Supabase sync: {supabase_status}")
+    typer.echo("Press Ctrl+C to stop")
+
+    stop = False
+
+    def _handler(sig, frame):
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGINT, _handler)
+    signal.signal(signal.SIGTERM, _handler)
+
+    import time
+    while not stop:
+        time.sleep(1.0)
+
+    plane.stop()
+    typer.echo("ObservationPlane stopped.")
 
 
 def main() -> None:

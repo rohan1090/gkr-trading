@@ -80,10 +80,15 @@ class AlpacaMarketDataFeed:
         self._stats.polls += 1
         envelopes: List[MarketDataEnvelope] = []
 
-        # Poll equities
+        # Poll equities — snapshot first, bars as fallback
         if self._config.equity_tickers:
             try:
                 eq_envelopes = self._poll_equity_snapshots()
+                if not eq_envelopes or all(
+                    getattr(e, 'last_cents', None) is None for e in eq_envelopes
+                ):
+                    logger.info("Snapshot data empty — falling back to historical bars")
+                    eq_envelopes = self._poll_historical_bars(timeframe="1Day", limit=1)
                 envelopes.extend(eq_envelopes)
                 self._stats.consecutive_failures = 0
             except Exception as exc:
@@ -252,6 +257,56 @@ class AlpacaMarketDataFeed:
             vega=greeks.get("vega"),
             open_interest=snap.get("openInterest"),
         )
+
+    # ---- Historical bars fallback ----------------------------------------
+
+    def _poll_historical_bars(
+        self, timeframe: str = "1Day", limit: int = 1
+    ) -> List[MarketDataEnvelope]:
+        """Fetch most recent OHLCV bar per ticker from /v2/stocks/bars.
+
+        Works 24/7 — used as a fallback when the snapshot endpoint
+        returns empty data (e.g. extended downtime).
+        """
+        tickers = list(self._config.equity_tickers)
+        if not tickers:
+            return []
+
+        symbols = ",".join(tickers)
+        now_ns = time.time_ns()
+        raw = self._http.request_json(
+            "GET",
+            "/v2/stocks/bars",
+            query={
+                "symbols": symbols,
+                "timeframe": timeframe,
+                "limit": str(limit),
+                "sort": "desc",
+                "adjustment": "raw",
+            },
+        )
+
+        bars_data = raw.get("bars", {}) if isinstance(raw, dict) else {}
+        envelopes: List[MarketDataEnvelope] = []
+        for ticker, bars in bars_data.items():
+            if not bars:
+                continue
+            bar = bars[0]
+            close_cents = _dollars_to_cents(bar.get("c"))
+            env = MarketDataEnvelope(
+                instrument_ref=EquityRef(ticker=ticker.upper()),
+                timestamp_ns=now_ns,
+                last_cents=close_cents,
+                open_cents=_dollars_to_cents(bar.get("o")),
+                high_cents=_dollars_to_cents(bar.get("h")),
+                low_cents=_dollars_to_cents(bar.get("l")),
+                close_cents=close_cents,
+                volume=bar.get("v"),
+            )
+            envelopes.append(env)
+
+        logger.info(f"Historical bars fallback: {len(envelopes)} tickers updated")
+        return envelopes
 
 
 def _dollars_to_cents(val: Any) -> Optional[int]:

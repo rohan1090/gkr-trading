@@ -531,6 +531,7 @@ class ContinuousSessionConfig:
     poll_interval_sec: float = 15.0
     max_cycles: Optional[int] = None           # None = run until stop condition
     stop_after_market_close: bool = True
+    pause_on_market_close: bool = False        # True = sleep until reopen instead of stopping
     max_consecutive_md_failures: int = 5
     enable_websocket: bool = True
 
@@ -586,6 +587,7 @@ class ContinuousSessionRunner:
         self._cycles = 0
         self._stop_reason = ""
         self._stop_requested = False
+        self._status = "stopped"
         self._ws_trade_updates = 0
         self._ws_connected = False
         self._submission_suspended = False
@@ -602,6 +604,7 @@ class ContinuousSessionRunner:
 
     def run_session(self) -> ContinuousSessionResult:
         """Run the full session: startup → loop → shutdown."""
+        self._status = "running"
         # --- Startup ---
         ok = self._runner.startup()
         if not ok:
@@ -637,6 +640,7 @@ class ContinuousSessionRunner:
 
         # --- Shutdown ---
         session_result = self._runner.shutdown()
+        self._status = "stopped"
 
         # --- Replay validation ---
         anomaly_count = self._run_replay_validation()
@@ -702,11 +706,42 @@ class ContinuousSessionRunner:
         if self._config.stop_after_market_close and self._metadata:
             try:
                 if not self._metadata.is_market_open():
+                    if self._config.pause_on_market_close:
+                        logger.info("Market closed — entering overnight pause mode")
+                        self._status = "paused_market_closed"
+                        self._wait_for_market_open()
+                        logger.info("Market reopened — resuming session")
+                        self._status = "running"
+                        return None  # continue the main loop
                     return StopReason.MARKET_CLOSED
             except Exception:
                 pass  # Don't halt on metadata errors
 
         return None
+
+    def _wait_for_market_open(self) -> None:
+        """Interruptible sleep until market opens or runner is cancelled."""
+        while True:
+            if self._stop_requested:
+                return
+            if self._metadata and self._metadata.is_market_open():
+                return
+            next_open = None
+            if self._metadata:
+                try:
+                    next_open = self._metadata.next_market_open()
+                except Exception:
+                    pass
+            if next_open:
+                logger.info(f"Market opens at {next_open.isoformat()} — sleeping 60s")
+            else:
+                logger.info("Waiting for market to open — sleeping 60s")
+            time.sleep(60)
+
+    @property
+    def status(self) -> str:
+        """Returns 'running' | 'paused_market_closed' | 'stopped' | 'error'."""
+        return getattr(self, '_status', 'stopped')
 
     def _setup_ws_callbacks(self) -> None:
         """Wire WebSocket callbacks into the runtime."""

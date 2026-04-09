@@ -89,8 +89,27 @@ class GKRTradingApp(App):
         self._strategy_states: dict[str, dict] = {
             name: dict(DEFAULT_STRATEGY_STATE) for name in AVAILABLE_STRATEGIES
         }
+        # Observation plane (always-on data collection)
+        self._observation_plane = None
 
     def on_mount(self) -> None:
+        # Start observation plane (always-on, replaces nothing, augments workers)
+        try:
+            from gkr_trading.live.observation_plane import ObservationPlane
+            from gkr_trading.live.data_bus import (
+                get_default_bus, TOPIC_MARKET_SNAPSHOT,
+                TOPIC_POSITIONS, TOPIC_ACCOUNT, TOPIC_MARKET_STATUS,
+            )
+            self._observation_plane = ObservationPlane(db_path=self._db_path)
+            bus = get_default_bus()
+            bus.subscribe(TOPIC_MARKET_SNAPSHOT, self._on_bus_market_snapshot)
+            bus.subscribe(TOPIC_POSITIONS, self._on_bus_positions)
+            bus.subscribe(TOPIC_ACCOUNT, self._on_bus_account)
+            bus.subscribe(TOPIC_MARKET_STATUS, self._on_bus_market_status)
+            self._observation_plane.start()
+        except Exception as exc:
+            logger.warning(f"ObservationPlane init failed (non-fatal): {exc}")
+
         # Validate DB
         if not Path(self._db_path).exists():
             self.notify(
@@ -253,6 +272,27 @@ class GKRTradingApp(App):
             summary.update_summary(account)
         except Exception as exc:
             logger.debug(f"AccountSummaryBar not ready: {exc}")
+
+    # ── DataBus callbacks (bridged to Textual main thread) ──────────
+
+    def _on_bus_market_snapshot(self, payload: dict) -> None:
+        """Called from poller thread via DataBus."""
+        ticker = payload.get("ticker")
+        last_cents = payload.get("last_cents")
+        if ticker and last_cents is not None:
+            self._market_prices[ticker] = last_cents
+
+    def _on_bus_positions(self, payload: dict) -> None:
+        pass  # Workers handle primary UI update; bus is for cache sync
+
+    def _on_bus_account(self, payload: dict) -> None:
+        pass  # Workers handle primary UI update; bus is for cache sync
+
+    def _on_bus_market_status(self, payload: dict) -> None:
+        is_open = payload.get("is_open", False)
+        if is_open != self._market_open:
+            self._market_open = is_open
+            self.call_from_thread(self._on_market_status, is_open)
 
     def _update_history_ui(self) -> None:
         """Refresh the history panel with session data."""
@@ -625,6 +665,14 @@ class GKRTradingApp(App):
             footer.toggle_class("hidden")
         except Exception:
             pass
+
+    def on_unmount(self) -> None:
+        """Clean up observation plane on exit."""
+        if self._observation_plane:
+            try:
+                self._observation_plane.stop()
+            except Exception:
+                pass
 
     # ── Internal helpers ────────────────────────────────────────────────
 
