@@ -56,7 +56,7 @@ class AlpacaPositionsWorker:
             self._http = UrllibAlpacaHttpClient(config=cfg)
             self._available = True
         except Exception as exc:
-            logger.warning(f"AlpacaPositionsWorker unavailable: {exc}")
+            logger.warning(f"AlpacaPositionsWorker unavailable: {exc}", exc_info=True)
             self._available = False
 
     @property

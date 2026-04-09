@@ -73,15 +73,21 @@ class DBWatcher:
         if not conn:
             return []
         try:
-            cur = conn.execute(
-                """SELECT session_id,
-                          COUNT(*) as event_count,
-                          MIN(envelope_json) as first_event,
-                          MAX(seq) as max_seq
-                   FROM events
-                   GROUP BY session_id
-                   ORDER BY MAX(seq) DESC"""
-            )
+            try:
+                cur = conn.execute(
+                    """SELECT session_id,
+                              COUNT(*) as event_count,
+                              MIN(envelope_json) as first_event,
+                              MAX(seq) as max_seq
+                       FROM events
+                       GROUP BY session_id
+                       ORDER BY MAX(seq) DESC"""
+                )
+            except sqlite3.OperationalError as exc:
+                if "no such table" in str(exc).lower():
+                    logger.warning("events table missing — run init-db first")
+                    return []
+                raise
             sessions = []
             for row in cur.fetchall():
                 sid = row[0]

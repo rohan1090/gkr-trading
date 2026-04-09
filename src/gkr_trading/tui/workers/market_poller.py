@@ -120,8 +120,14 @@ class MarketPoller:
                 base_url=ALPACA_DATA_BASE_URL,
             )
             self._data_http = UrllibAlpacaHttpClient(config=data_cfg)
+            # Confirm: log the base_url at init time
+            logger.info(f"MarketPoller: data API base_url={ALPACA_DATA_BASE_URL}")
+            logger.info(f"MarketPoller: broker API base_url={cfg.base_url}")
 
-            md_config = MarketDataFeedConfig(equity_tickers=tuple(self._tickers))
+            md_config = MarketDataFeedConfig(
+                equity_tickers=tuple(self._tickers),
+                drop_stale=False,
+            )
             self._feed = AlpacaMarketDataFeed(
                 http_client=self._data_http, config=md_config
             )
@@ -129,7 +135,7 @@ class MarketPoller:
             self._metadata = AlpacaMarketMetadataProvider(self._http)
             self._available = True
         except Exception as exc:
-            logger.warning(f"Market data unavailable: {exc}")
+            logger.warning(f"Market data unavailable: {exc}", exc_info=True)
             self._available = False
 
     @property

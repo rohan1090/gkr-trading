@@ -191,10 +191,11 @@ class GKRTradingApp(App):
     def _market_poll_loop(self) -> None:
         """Background thread: poll market data every 15s."""
         worker = get_current_worker()
-        if not self._market_poller or not self._market_poller.available:
-            return
-
         while not worker.is_cancelled:
+            if not self._market_poller or not self._market_poller.available:
+                time.sleep(30.0)
+                continue
+
             try:
                 snapshots, market_open = self._market_poller.poll_once()
                 if snapshots:
@@ -215,10 +216,11 @@ class GKRTradingApp(App):
     def _positions_poll_loop(self) -> None:
         """Background thread: poll Alpaca positions every 10s."""
         worker = get_current_worker()
-        if not self._positions_worker or not self._positions_worker.available:
-            return
-
         while not worker.is_cancelled:
+            if not self._positions_worker or not self._positions_worker.available:
+                time.sleep(30.0)
+                continue
+
             try:
                 positions, account = self._positions_worker.poll_once()
                 self.call_from_thread(self._on_positions_update, positions, account)
@@ -242,15 +244,15 @@ class GKRTradingApp(App):
         try:
             table = self.query_one("#live-positions-table", LivePositionsTable)
             table.update_positions(positions)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"LivePositionsTable not ready: {exc}")
 
         # Update account summary
         try:
             summary = self.query_one("#account-summary", AccountSummaryBar)
             summary.update_summary(account)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"AccountSummaryBar not ready: {exc}")
 
     def _update_history_ui(self) -> None:
         """Refresh the history panel with session data."""
@@ -638,8 +640,16 @@ class GKRTradingApp(App):
             sessions_with_dates = self._db_watcher.get_sessions_with_dates()
             panel = self.query_one("#trading-history-panel", TradingHistoryPanel)
             panel.update_history(sessions_with_dates)
-        except Exception:
-            pass
+            if not sessions_with_dates:
+                # Surface the empty state to the user
+                self.notify(
+                    "No trading sessions found in database. "
+                    "Run paper-v2-continuous to create a session.",
+                    severity="information",
+                    timeout=8,
+                )
+        except Exception as exc:
+            logger.error(f"_refresh_history error: {exc}", exc_info=True)
 
     def _refresh_strategy_panels(self) -> None:
         """Update both strategy panels (allocation sidebar + full control)."""

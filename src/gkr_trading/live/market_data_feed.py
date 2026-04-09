@@ -34,6 +34,7 @@ class MarketDataFeedConfig:
     poll_interval_sec: float = 15.0
     max_consecutive_failures: int = 5
     stale_threshold_sec: float = 120.0  # data older than this is stale
+    drop_stale: bool = True  # False for TUI (always show latest data even if unchanged)
 
 
 @dataclass
@@ -150,7 +151,10 @@ class AlpacaMarketDataFeed:
 
         if ts_key in self._last_timestamps and self._last_timestamps[ts_key] == ts_ns:
             self._stats.stale_skips += 1
-            return None
+            # For TUI display, pass through stale data instead of dropping.
+            # Strategy engine callers default to drop_stale=True.
+            if getattr(self._config, 'drop_stale', True):
+                return None
         self._last_timestamps[ts_key] = ts_ns
 
         last_cents = _dollars_to_cents(latest_trade.get("p"))
