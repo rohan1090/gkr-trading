@@ -762,6 +762,18 @@ class TestWebSocketIntegration:
             realized_pnl_cents=0, status="open",
         )
 
+        # Register an order for AAPL so session-scoped recon treats it as blocking.
+        pending = PendingOrderRegistry(conn)
+        pending.register(
+            client_order_id=f"test-{uuid.uuid4()}",
+            intent_id=f"intent-{uuid.uuid4()}",
+            session_id=sid,
+            instrument_ref_json='{"type": "equity", "ticker": "AAPL"}',
+            action="buy",
+            venue="mock_venue",
+            quantity=50,
+        )
+
         # Disconnect
         ws._on_disconnect("test")
 
@@ -867,6 +879,19 @@ class TestReconciliationHardening:
             realized_pnl_cents=0, status="open",
         )
 
+        # Register an order for AAPL so the session considers it "its own"
+        # instrument — required for blocking severity with session-scoped recon.
+        pending = PendingOrderRegistry(conn)
+        pending.register(
+            client_order_id=f"test-{uuid.uuid4()}",
+            intent_id=f"intent-{uuid.uuid4()}",
+            session_id=sid,
+            instrument_ref_json='{"type": "equity", "ticker": "AAPL"}',
+            action="buy",
+            venue="mock_venue",
+            quantity=50,
+        )
+
         # Venue says 100, local says 50 → blocking mismatch
         adapter.set_positions([
             VenuePosition(instrument_key="equity:AAPL", quantity=100),
@@ -962,8 +987,21 @@ class TestReconciliationHardening:
             realized_pnl_cents=0, status="open",
         )
 
+        # Register an order for AAPL so session-scoped recon treats it as blocking.
+        pending = PendingOrderRegistry(conn)
+        pending.register(
+            client_order_id=f"test-{uuid.uuid4()}",
+            intent_id=f"intent-{uuid.uuid4()}",
+            session_id=sid,
+            instrument_ref_json='{"type": "equity", "ticker": "AAPL"}',
+            action="buy",
+            venue="mock_venue",
+            quantity=50,
+        )
+
         recon = ReconciliationService(
             position_store=ps, adapter=adapter, session_id=sid,
+            pending_registry=pending,
         )
         snapshot = recon.reconcile()
 

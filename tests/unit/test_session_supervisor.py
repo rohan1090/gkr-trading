@@ -58,7 +58,7 @@ def supervisor_components(tmp_path):
     pending = PendingOrderRegistry(conn)
     position_store = PositionStore(conn)
     adapter = MockAdapter()
-    recon = ReconciliationService(position_store, adapter, "sess-1")
+    recon = ReconciliationService(position_store, adapter, "sess-1", pending_registry=pending)
     sup = SessionSupervisor(event_store, pending, recon, session_id="sess-1", venue="test")
     return sup, event_store, pending, adapter
 
@@ -90,12 +90,17 @@ class TestStartupReconciliation:
         """If startup reconciliation finds blocking breaks, session halts."""
         sup, event_store, pending, adapter = supervisor_components
         # Create a local position that won't match venue (which has none)
-        conn = sqlite3.connect(str(sup._recon._store._conn.execute("PRAGMA database_list").fetchone()[2]))
-        # Use the position store directly
         sup._recon._store.upsert_equity(
             ticker="AAPL", venue="test", session_id="sess-1",
             signed_qty=100, cost_basis_cents=1500000,
             realized_pnl_cents=0, status="open",
+        )
+        # Register an order for AAPL so session-scoped recon treats it as blocking.
+        pending.register(
+            client_order_id="ord-block-1", intent_id="int-block-1",
+            session_id="sess-1",
+            instrument_ref_json='{"type": "equity", "ticker": "AAPL"}',
+            action="buy", venue="test", quantity=100,
         )
         # Adapter returns no positions — this creates a blocking break
         result = sup.startup()
