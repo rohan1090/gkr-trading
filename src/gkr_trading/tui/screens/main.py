@@ -44,6 +44,14 @@ from gkr_trading.tui.widgets.strategy_panel import (
 
 logger = logging.getLogger(__name__)
 
+# Ordered list — we step through each, then land back on tab-positions
+_EAGER_MOUNT_SEQUENCE = [
+    "tab-market",
+    "tab-strategies",
+    "tab-history",
+    "tab-positions",
+]
+
 
 class MainScreen(Screen):
     """Primary screen with header, 4 tabs, and footer event log."""
@@ -125,24 +133,28 @@ class MainScreen(Screen):
         table.add_columns("Index", "Event Type", "Code", "Message")
         table.zebra_stripes = True
 
-        # Force-mount all tab panes by cycling through them.
-        # Textual lazily mounts TabPane contents — widgets inside inactive
-        # tabs don't exist in the DOM until the tab is first activated.
-        # Cycling here ensures query_one('#market-data') etc. always succeed
-        # when background workers start pushing data.
-        self.call_after_refresh(self._eager_mount_all_tabs)
+        # Force-mount all tab panes by stepping through them one per refresh
+        # cycle. Switching tabs synchronously in a loop doesn't work — Textual
+        # needs to yield to the event loop between each switch so it can
+        # actually compose and mount the new pane's widgets.
+        self.call_after_refresh(self._eager_mount_step, 0)
 
         # Start live clock
         self.set_interval(1.0, self._tick_clock)
 
-    def _eager_mount_all_tabs(self) -> None:
-        """Cycle through all tabs to force Textual to mount every widget."""
+    def _eager_mount_step(self, index: int) -> None:
+        """Switch to one tab per refresh cycle so Textual mounts each pane."""
         tabs = self.query_one("#main-tabs", TabbedContent)
-        tab_ids = ["tab-market", "tab-strategies", "tab-history", "tab-positions"]
-        for tab_id in tab_ids:
-            tabs.active = tab_id
-        # Return to Positions as the default landing tab
-        tabs.active = "tab-positions"
+        tab_id = _EAGER_MOUNT_SEQUENCE[index]
+        tabs.active = tab_id
+        logger.debug(f"_eager_mount_step: activated {tab_id} ({index+1}/{len(_EAGER_MOUNT_SEQUENCE)})")
+
+        next_index = index + 1
+        if next_index < len(_EAGER_MOUNT_SEQUENCE):
+            # Schedule the next step after the current one renders
+            self.call_after_refresh(self._eager_mount_step, next_index)
+        else:
+            logger.info("_eager_mount_step: all tabs mounted, widgets ready")
 
     def _tick_clock(self) -> None:
         from datetime import datetime
