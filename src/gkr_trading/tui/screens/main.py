@@ -12,6 +12,7 @@ from typing import Optional
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import (
     Button,
@@ -51,6 +52,10 @@ _EAGER_MOUNT_SEQUENCE = [
     "tab-history",
     "tab-positions",
 ]
+
+
+class AllTabsMounted(Message):
+    """Posted by MainScreen after all tab panes have been force-mounted."""
 
 
 class MainScreen(Screen):
@@ -151,10 +156,11 @@ class MainScreen(Screen):
 
         next_index = index + 1
         if next_index < len(_EAGER_MOUNT_SEQUENCE):
-            # Schedule the next step after the current one renders
             self.call_after_refresh(self._eager_mount_step, next_index)
         else:
-            logger.info("_eager_mount_step: all tabs mounted, widgets ready")
+            logger.info("_eager_mount_step: all tabs mounted, posting AllTabsMounted")
+            # Post message so app.py can replay pending data immediately
+            self.post_message(AllTabsMounted())
 
     def _tick_clock(self) -> None:
         from datetime import datetime
