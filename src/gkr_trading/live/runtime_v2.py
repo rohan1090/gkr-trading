@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -588,6 +589,7 @@ class ContinuousSessionRunner:
         self._ws_trade_updates = 0
         self._ws_connected = False
         self._submission_suspended = False
+        self._process_lock = threading.Lock()
 
     @property
     def runner(self) -> PaperSessionRunnerV2:
@@ -673,7 +675,8 @@ class ContinuousSessionRunner:
                 if self._stop_requested:
                     return self._stop_reason or StopReason.EXTERNAL
                 try:
-                    self._runner.process_market_data(env)
+                    with self._process_lock:
+                        self._runner.process_market_data(env)
                 except Exception as exc:
                     logger.error(f"Error processing market data: {exc}")
                     self._runner._errors.append(str(exc))
@@ -717,10 +720,11 @@ class ContinuousSessionRunner:
         logger.info("WebSocket connected")
 
     def _on_ws_trade_update(self, payload: dict) -> None:
-        """Process a trade_update from the websocket."""
+        """Process a trade_update from the websocket (called from WS thread)."""
         self._ws_trade_updates += 1
         try:
-            self._runner.process_venue_events([payload])
+            with self._process_lock:
+                self._runner.process_venue_events([payload])
         except Exception as exc:
             logger.error(f"WS trade_update processing error: {exc}")
 
@@ -751,12 +755,20 @@ class ContinuousSessionRunner:
     def _run_replay_validation(self) -> int:
         """Run replay validation and return anomaly count."""
         try:
-            from gkr_trading.core.replay.engine import ReplayEngine, replay_portfolio_state
+            from gkr_trading.core.replay import ReplayEngine
+            from decimal import Decimal
+            import sqlite3
+
             events = self._runner._event_store.load_session(
                 self._runner._config.session_id
             )
-            result = replay_portfolio_state(
-                events, Decimal("100000"), strict=False,
+            if not events:
+                return 0
+
+            eng = ReplayEngine(self._runner._event_store, Decimal("100000"))
+            from gkr_trading.core.schemas.ids import SessionId
+            result, _ = eng.replay_session(
+                SessionId(self._runner._config.session_id), strict=False
             )
             return len(result.anomalies)
         except Exception as exc:

@@ -210,8 +210,16 @@ class AlpacaWebSocketManager:
         elif isinstance(auth_resp, dict):
             if auth_resp.get("data", {}).get("status") == "authorized":
                 pass
-            elif auth_resp.get("stream") == "authorization" and auth_resp.get("data", {}).get("status") == "authorized":
+            elif (
+                auth_resp.get("stream") == "authorization"
+                and auth_resp.get("data", {}).get("status") == "authorized"
+            ):
                 pass
+            elif auth_resp.get("code") in (40100, 40110, 40300):
+                raise ConnectionError(f"WebSocket auth rejected by Alpaca: {auth_resp}")
+            else:
+                # Unknown dict format — log and continue cautiously
+                logger.warning(f"Unrecognized auth response format: {auth_resp}")
 
         # Subscribe to trade_updates
         sub_msg = {

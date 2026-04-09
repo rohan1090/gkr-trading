@@ -509,7 +509,6 @@ def paper_v2_continuous_cmd(
 ) -> None:
     """Run a continuous V2 paper session with real market data."""
     from gkr_trading.cli.commands.paper_v2 import paper_v2_continuous
-    ctx = typer.Context(paper_v2_continuous)
     paper_v2_continuous(
         db_path=db_path,
         session_id=session_id,

@@ -62,12 +62,16 @@ class ReconciliationService:
             local_qty = local_equity_map.get(ticker, 0)
             venue_qty = venue_equity_map.get(ticker, 0)
             if local_qty != venue_qty:
+                # Only blocking if this session has a local record of this position.
+                # If local_qty == 0, this is a pre-existing venue position from another
+                # session — downgrade to warning so startup is not blocked.
+                severity = "blocking" if local_qty != 0 else "warning"
                 breaks.append(ReconciliationBreak(
                     field=f"equity_position:{ticker}",
                     local_value=str(local_qty),
                     venue_value=str(venue_qty),
                     break_type="position",
-                    severity="blocking",
+                    severity=severity,
                 ))
 
         # Reconcile options positions
@@ -88,12 +92,13 @@ class ReconciliationService:
             local_qty = local_options_map.get(occ, 0)
             venue_qty = venue_options_map.get(occ, 0)
             if local_qty != venue_qty:
+                severity = "blocking" if local_qty != 0 else "warning"
                 breaks.append(ReconciliationBreak(
                     field=f"options_position:{occ}",
                     local_value=str(local_qty),
                     venue_value=str(venue_qty),
                     break_type="position",
-                    severity="blocking",
+                    severity=severity,
                 ))
 
         # Cash reconciliation

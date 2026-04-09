@@ -754,10 +754,19 @@ class TestWebSocketIntegration:
         cs.runner.startup()
         cs._setup_ws_callbacks()
 
+        # Create a local position so local_qty != 0 (required for blocking break)
+        ps = PositionStore(conn)
+        ps.upsert_equity(
+            session_id=sid, venue="mock_venue", ticker="AAPL",
+            signed_qty=50, cost_basis_cents=750000,
+            realized_pnl_cents=0, status="open",
+        )
+
         # Disconnect
         ws._on_disconnect("test")
 
-        # Inject a blocking break by setting a position mismatch
+        # Inject a blocking break by setting a venue position that disagrees
+        # with the local record (local=50, venue=100)
         adapter.set_positions([
             VenuePosition(instrument_key="equity:AAPL", quantity=100),
         ])
@@ -826,12 +835,39 @@ class TestReconciliationHardening:
         assert ok
         assert runner.supervisor.state == SessionState.RUNNING
 
-    def test_blocking_break_prevents_startup(self):
-        """Position mismatch at startup → session halted."""
+    def test_preexisting_venue_position_does_not_block_startup(self):
+        """Venue position with no local record → warning, not blocking."""
         conn = _in_memory_db()
         sid = str(uuid.uuid4())
         adapter = MockVenueAdapter()
-        # Venue says we have 100 AAPL, local says 0
+        # Venue says we have 100 AAPL, local says 0 (pre-existing from prior run)
+        adapter.set_positions([
+            VenuePosition(instrument_key="equity:AAPL", quantity=100),
+        ])
+
+        runner = build_paper_runner(
+            conn=conn, session_id=sid, equity_adapter=adapter, venue="mock_venue",
+        )
+        ok = runner.startup()
+        # Should succeed — local_qty==0 means pre-existing venue position → warning only
+        assert ok
+        assert runner.supervisor.state == SessionState.RUNNING
+
+    def test_local_position_mismatch_blocks_startup(self):
+        """Position tracked locally but qty disagrees with venue → blocking."""
+        conn = _in_memory_db()
+        sid = str(uuid.uuid4())
+        adapter = MockVenueAdapter()
+
+        # First, create a local position record so local_qty != 0
+        ps = PositionStore(conn)
+        ps.upsert_equity(
+            session_id=sid, venue="mock_venue", ticker="AAPL",
+            signed_qty=50, cost_basis_cents=750000,
+            realized_pnl_cents=0, status="open",
+        )
+
+        # Venue says 100, local says 50 → blocking mismatch
         adapter.set_positions([
             VenuePosition(instrument_key="equity:AAPL", quantity=100),
         ])
@@ -887,8 +923,8 @@ class TestReconciliationHardening:
             assert all(b.severity == "warning" for b in cash_breaks)
             assert not snapshot.has_blocking_breaks()
 
-    def test_position_mismatch_is_blocking(self):
-        """Equity position mismatch → blocking break."""
+    def test_venue_only_position_is_warning(self):
+        """Venue has position, local has none → warning (not blocking)."""
         from gkr_trading.live.reconciliation_service import ReconciliationService
         conn = _in_memory_db()
         sid = str(uuid.uuid4())
@@ -897,6 +933,34 @@ class TestReconciliationHardening:
             VenuePosition(instrument_key="equity:AAPL", quantity=50),
         ])
         ps = PositionStore(conn)
+
+        recon = ReconciliationService(
+            position_store=ps, adapter=adapter, session_id=sid,
+        )
+        snapshot = recon.reconcile()
+
+        position_breaks = [b for b in snapshot.breaks if b.break_type == "position"]
+        assert len(position_breaks) == 1
+        # local_qty==0 → warning, not blocking
+        assert position_breaks[0].severity == "warning"
+        assert not snapshot.has_blocking_breaks()
+
+    def test_local_tracked_position_mismatch_is_blocking(self):
+        """Local session tracked a position that disagrees with venue → blocking."""
+        from gkr_trading.live.reconciliation_service import ReconciliationService
+        conn = _in_memory_db()
+        sid = str(uuid.uuid4())
+        adapter = MockVenueAdapter()
+        adapter.set_positions([
+            VenuePosition(instrument_key="equity:AAPL", quantity=100),
+        ])
+        ps = PositionStore(conn)
+        # Create a local record so local_qty != 0
+        ps.upsert_equity(
+            session_id=sid, venue="mock_venue", ticker="AAPL",
+            signed_qty=50, cost_basis_cents=750000,
+            realized_pnl_cents=0, status="open",
+        )
 
         recon = ReconciliationService(
             position_store=ps, adapter=adapter, session_id=sid,
