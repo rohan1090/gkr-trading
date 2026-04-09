@@ -91,6 +91,11 @@ class GKRTradingApp(App):
         }
         # Observation plane (always-on data collection)
         self._observation_plane = None
+        # Pending data caches — hold last known data so it can be replayed
+        # after widgets are fully mounted (tabs are lazily composed).
+        self._pending_snapshots: list = []
+        self._pending_positions: list[LivePosition] = []
+        self._pending_account: Optional[LiveAccountSummary] = None
 
     def on_mount(self) -> None:
         # Start observation plane (always-on, replaces nothing, augments workers)
@@ -147,7 +152,8 @@ class GKRTradingApp(App):
         """Push MainScreen after the compositor is ready."""
         self.push_screen(MainScreen())
 
-        # Initial data load (further deferred to let MainScreen fully compose)
+        # Initial data load (further deferred to let MainScreen fully compose
+        # including the eager tab pre-mount cycle in MainScreen.on_mount)
         self.call_after_refresh(self._initial_load)
 
         # Start background workers
@@ -156,7 +162,7 @@ class GKRTradingApp(App):
         self.run_worker(self._positions_poll_loop, name="positions-poller", thread=True)
 
     def _initial_load(self) -> None:
-        # Defer until after full mount cycle completes
+        # Defer until after full mount cycle + eager tab pre-mount completes
         self.set_timer(0.5, self._do_initial_load)
 
     def _do_initial_load(self) -> None:
@@ -176,10 +182,23 @@ class GKRTradingApp(App):
         # Initial history update
         self._refresh_history()
 
+        # Replay any data that arrived before widgets were fully mounted
+        self.set_timer(2.0, self._replay_pending_data)
+
+    def _replay_pending_data(self) -> None:
+        """Replay cached worker data into widgets now that all tabs are mounted."""
+        if self._pending_snapshots:
+            self._on_market_data(self._pending_snapshots)
+            self._pending_snapshots = []
+        if self._pending_positions or self._pending_account:
+            self._on_positions_update(self._pending_positions, self._pending_account)
+            self._pending_positions = []
+            self._pending_account = None
+
     def _find_todays_session(self) -> Optional[str]:
         """Find the session that was started today."""
         from datetime import date
-        today = date.today().isoformat()  # "2026-04-09"
+        today = date.today().isoformat()
         for s in self._sessions:
             started = s.get("started_at", "")
             if today in started:
@@ -196,13 +215,11 @@ class GKRTradingApp(App):
         worker = get_current_worker()
         while not worker.is_cancelled:
             try:
-                # Refresh session list
                 sessions = self._db_watcher.list_sessions() if self._db_watcher else []
                 if sessions != self._sessions:
                     self._sessions = sessions
                     self.call_from_thread(self._update_history_ui)
 
-                # Poll for new events
                 if self._active_session_id and self._db_watcher:
                     new_events = self._db_watcher.poll_events(self._active_session_id)
                     if new_events:
@@ -224,7 +241,6 @@ class GKRTradingApp(App):
             try:
                 snapshots, market_open = self._market_poller.poll_once()
                 if snapshots:
-                    # Update price cache
                     for s in snapshots:
                         if s.last_cents is not None:
                             self._market_prices[s.ticker] = s.last_cents
@@ -265,19 +281,26 @@ class GKRTradingApp(App):
         self._live_positions = positions
         self._live_account = account
 
-        # Update live positions table
+        table_ok = False
         try:
             table = self.query_one("#live-positions-table", LivePositionsTable)
             table.update_positions(positions)
+            table_ok = True
         except Exception as exc:
             logger.debug(f"LivePositionsTable not ready: {exc}")
 
-        # Update account summary
+        summary_ok = False
         try:
             summary = self.query_one("#account-summary", AccountSummaryBar)
             summary.update_summary(account)
+            summary_ok = True
         except Exception as exc:
             logger.debug(f"AccountSummaryBar not ready: {exc}")
+
+        # Cache if widgets weren't ready
+        if not table_ok or not summary_ok:
+            self._pending_positions = list(positions)
+            self._pending_account = account
 
     # ── DataBus callbacks (bridged to Textual main thread) ──────────
 
@@ -289,10 +312,10 @@ class GKRTradingApp(App):
             self._market_prices[ticker] = last_cents
 
     def _on_bus_positions(self, payload: dict) -> None:
-        pass  # Workers handle primary UI update; bus is for cache sync
+        pass
 
     def _on_bus_account(self, payload: dict) -> None:
-        pass  # Workers handle primary UI update; bus is for cache sync
+        pass
 
     def _on_bus_market_status(self, payload: dict) -> None:
         is_open = payload.get("is_open", False)
@@ -301,7 +324,6 @@ class GKRTradingApp(App):
             self.call_from_thread(self._on_market_status, is_open)
 
     def _update_history_ui(self) -> None:
-        """Refresh the history panel with session data."""
         self._refresh_history()
 
     def _on_new_events(self, events: list[EventSummary]) -> None:
@@ -312,11 +334,17 @@ class GKRTradingApp(App):
             pass
 
     def _on_market_data(self, snapshots: list) -> None:
+        market_ok = False
         try:
             table = self.query_one("#market-data", MarketDataTable)
             table.update_data(snapshots)
+            market_ok = True
         except Exception:
             pass
+
+        # Cache if market table wasn't ready yet
+        if not market_ok:
+            self._pending_snapshots = list(snapshots)
 
         # Update header ticker tape
         try:
@@ -337,7 +365,6 @@ class GKRTradingApp(App):
         except Exception:
             pass
 
-        # Update sparkline if a ticker is selected
         if self._selected_ticker and self._market_poller:
             self.show_ticker_chart(self._selected_ticker)
 
@@ -349,7 +376,6 @@ class GKRTradingApp(App):
         except Exception:
             pass
 
-        # Update logo indicator
         try:
             logo = self.query_one("#header-logo", Static)
             if is_open:
@@ -362,30 +388,24 @@ class GKRTradingApp(App):
     # ── Public API (called from screen/widgets) ─────────────────────────
 
     def set_active_session(self, session_id: str) -> None:
-        """Switch active session — refreshes event log and audit data."""
         self._active_session_id = session_id
         self._all_events = []
 
-        # Reset DB watcher seq tracking for this session
         if self._db_watcher:
             self._db_watcher._last_seq[session_id] = 0
 
-        # Load all events for this session
         if self._db_watcher:
             self._all_events = self._db_watcher.get_session_events(session_id)
 
-        # Load event log
         try:
             footer = self.query_one("#event-log-footer", EventLogFooter)
             footer.load_events(self._all_events)
         except Exception:
             pass
 
-        # Update kill switch level
         self._detect_kill_switch_level()
 
     def show_ticker_chart(self, ticker: str) -> None:
-        """Show sparkline chart for a ticker."""
         self._selected_ticker = ticker
         if not self._market_poller:
             return
@@ -400,14 +420,11 @@ class GKRTradingApp(App):
             pass
 
     def handle_kill_switch(self, level: str) -> None:
-        """Handle kill switch button press — confirm then execute."""
         if level == self._ks_level:
             self.notify(f"Kill switch already at {level}", severity="information")
             return
 
-        # Escalation requires confirmation
         if level in ("close_only", "full_halt"):
-            sid = self._active_session_id or "none"
             self.push_screen(
                 ConfirmScreen(
                     title=f"Activate {level.upper().replace('_', ' ')}?",
@@ -420,7 +437,6 @@ class GKRTradingApp(App):
             self._execute_kill_switch(level)
 
     def _execute_kill_switch(self, level: str) -> None:
-        """Execute kill switch via subprocess."""
         if not self._active_session_id:
             self.notify("No active session", severity="warning")
             return
@@ -448,7 +464,6 @@ class GKRTradingApp(App):
             self.notify(f"Kill switch error: {exc}", severity="error")
 
     def handle_reconcile(self) -> None:
-        """Run reconciliation for active session."""
         if not self._active_session_id:
             self.notify("No active session", severity="warning")
             return
@@ -458,7 +473,6 @@ class GKRTradingApp(App):
         )
 
     def _run_reconcile(self) -> None:
-        """Execute reconciliation in background thread."""
         try:
             from gkr_trading.persistence.db import open_sqlite
             from gkr_trading.persistence.position_store import PositionStore
@@ -520,7 +534,6 @@ class GKRTradingApp(App):
         self.notify(f"Reconciliation error: {error[:80]}", severity="error")
 
     def handle_replay(self) -> None:
-        """Run replay validation for active session."""
         if not self._active_session_id:
             self.notify("No active session", severity="warning")
             return
@@ -531,7 +544,6 @@ class GKRTradingApp(App):
         )
 
     def _run_replay(self) -> None:
-        """Execute replay in background thread."""
         try:
             from gkr_trading.persistence.db import open_sqlite
             from gkr_trading.persistence.event_store import SqliteEventStore
@@ -583,7 +595,6 @@ class GKRTradingApp(App):
     # ── Strategy management ─────────────────────────────────────────────
 
     def handle_strategy_toggle(self, strategy_name: str, active: bool) -> None:
-        """Toggle a strategy on/off."""
         if strategy_name not in self._strategy_states:
             self._strategy_states[strategy_name] = dict(DEFAULT_STRATEGY_STATE)
 
@@ -605,11 +616,9 @@ class GKRTradingApp(App):
         self._refresh_strategy_panels()
 
     def handle_strategy_allocation_change(self, strategy_name: str, new_pct: int) -> None:
-        """Update capital allocation for a strategy."""
         if strategy_name not in self._strategy_states:
             self._strategy_states[strategy_name] = dict(DEFAULT_STRATEGY_STATE)
 
-        # Validate total allocations don't exceed 100%
         total = sum(
             st.get("alloc_pct", 0)
             for name, st in self._strategy_states.items()
@@ -627,8 +636,6 @@ class GKRTradingApp(App):
         self._refresh_strategy_panels()
 
     def _launch_strategy_session(self, strategy_name: str) -> None:
-        """Launch a strategy session via subprocess."""
-        # Map strategy name to CLI --strategy arg
         strategy_arg = strategy_name.replace("_", "-")
 
         try:
@@ -649,7 +656,6 @@ class GKRTradingApp(App):
                 f"Strategy {strategy_name} launched in background",
                 severity="information",
             )
-            # Update state
             if strategy_name in self._strategy_states:
                 self._strategy_states[strategy_name]["status"] = "running"
             self._refresh_strategy_panels()
@@ -657,7 +663,6 @@ class GKRTradingApp(App):
             self.notify(f"Launch error: {exc}", severity="error")
 
     def refresh_active_data(self) -> None:
-        """Force refresh all data."""
         self._refresh_sessions()
         self._refresh_history()
         self._refresh_strategy_panels()
@@ -665,7 +670,6 @@ class GKRTradingApp(App):
             self.set_active_session(self._active_session_id)
 
     def action_toggle_log(self) -> None:
-        """Toggle event log visibility."""
         try:
             footer = self.query_one("#footer-log")
             footer.toggle_class("hidden")
@@ -673,7 +677,6 @@ class GKRTradingApp(App):
             pass
 
     def on_unmount(self) -> None:
-        """Clean up observation plane on exit."""
         if self._observation_plane:
             try:
                 self._observation_plane.stop()
@@ -687,7 +690,6 @@ class GKRTradingApp(App):
             self._sessions = self._db_watcher.list_sessions()
 
     def _refresh_history(self) -> None:
-        """Refresh the history tab with enriched session data."""
         if not self._db_watcher:
             return
         try:
@@ -695,7 +697,6 @@ class GKRTradingApp(App):
             panel = self.query_one("#trading-history-panel", TradingHistoryPanel)
             panel.update_history(sessions_with_dates)
             if not sessions_with_dates:
-                # Surface the empty state to the user
                 self.notify(
                     "No trading sessions found in database. "
                     "Run paper-v2-continuous to create a session.",
@@ -706,7 +707,6 @@ class GKRTradingApp(App):
             logger.error(f"_refresh_history error: {exc}", exc_info=True)
 
     def _refresh_strategy_panels(self) -> None:
-        """Update both strategy panels (allocation sidebar + full control)."""
         try:
             alloc = self.query_one("#strategy-alloc-panel", StrategyAllocationPanel)
             alloc.update_strategy_states(self._strategy_states)
@@ -719,7 +719,6 @@ class GKRTradingApp(App):
             pass
 
     def _detect_kill_switch_level(self) -> None:
-        """Detect current kill switch level from events."""
         level = "none"
         for ev in reversed(self._all_events):
             if ev.event_type == "operator_command":

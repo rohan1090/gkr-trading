@@ -125,8 +125,24 @@ class MainScreen(Screen):
         table.add_columns("Index", "Event Type", "Code", "Message")
         table.zebra_stripes = True
 
+        # Force-mount all tab panes by cycling through them.
+        # Textual lazily mounts TabPane contents — widgets inside inactive
+        # tabs don't exist in the DOM until the tab is first activated.
+        # Cycling here ensures query_one('#market-data') etc. always succeed
+        # when background workers start pushing data.
+        self.call_after_refresh(self._eager_mount_all_tabs)
+
         # Start live clock
         self.set_interval(1.0, self._tick_clock)
+
+    def _eager_mount_all_tabs(self) -> None:
+        """Cycle through all tabs to force Textual to mount every widget."""
+        tabs = self.query_one("#main-tabs", TabbedContent)
+        tab_ids = ["tab-market", "tab-strategies", "tab-history", "tab-positions"]
+        for tab_id in tab_ids:
+            tabs.active = tab_id
+        # Return to Positions as the default landing tab
+        tabs.active = "tab-positions"
 
     def _tick_clock(self) -> None:
         from datetime import datetime
